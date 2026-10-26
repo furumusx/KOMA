@@ -65,6 +65,11 @@ label.pick input{position:absolute;inset:0;opacity:0;font-size:0}
 .pv{position:relative;display:block;margin:0 auto var(--sp3);max-width:100%;width:fit-content}
 .pv img{display:block;max-width:100%;max-height:52vh;border-radius:var(--r-sm)}
 .pv svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.cropbox{position:relative;width:min(340px,100%);aspect-ratio:1/1;margin:0 auto;overflow:hidden;border-radius:var(--r-sm);background:#000;touch-action:none;outline:2px solid #ffe100}
+.cropbox img{position:absolute;max-width:none;user-select:none;-webkit-user-select:none;pointer-events:none}
+.cropbox svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.cropbox svg line{stroke:#fff;stroke-opacity:.7;stroke-width:1}
+.cropbox svg line.c{stroke:#5aa9ff;stroke-dasharray:6}
 .cmp{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp2)}
 .cmp img{width:100%;border-radius:var(--r-sm)}
 .cmp .note{text-align:center;margin-bottom:4px}
@@ -82,7 +87,7 @@ label.pick input{position:absolute;inset:0;opacity:0;font-size:0}
 <div id="toast"></div>
 <script>
 'use strict';
-const APP_VER='1.0.0';
+const APP_VER='1.0.1';
 const KEY='koma_v1';
 const SETK=['単品','途中セット','全巻セット','その他'];
 const DEFS={
@@ -111,9 +116,15 @@ const idbGet=id=>tx('readonly',st=>st.get(id));
 const idbPut=rec=>tx('readwrite',st=>st.put(rec));
 const idbDel=id=>tx('readwrite',st=>st.delete(id));
 const idbClear=()=>tx('readwrite',st=>st.clear());
+const idbAll=()=>tx('readonly',st=>st.getAll());
 const URLS=new Map();
-async function imgURL(id){if(!id)return null;if(URLS.has(id))return URLS.get(id);const r=await idbGet(id);if(!r||!r.cur)return null;const u=URL.createObjectURL(r.cur);URLS.set(id,u);return u}
-function dropURL(id){const u=URLS.get(id);if(u){URL.revokeObjectURL(u);URLS.delete(id)}}
+const isPlain=ed=>!ed||(!ed.rot&&!ed.square&&!ed.auto);
+const srcOf=r=>r&&(r.orig||r.cur)||null;
+async function shotURL(id,ed,max){if(!id)return null;const k=id+'|'+JSON.stringify(ed||{})+'|'+(max||0);if(URLS.has(k))return URLS.get(k);
+  const r=await idbGet(id);const src=srcOf(r);if(!src)return null;const b=(isPlain(ed)&&!max)?src:await renderEdit(src,ed||{},max);const u=URL.createObjectURL(b);URLS.set(k,u);return u}
+const imgURL=id=>shotURL(id,{},0);
+async function shotBlob(s){const r=await idbGet(s.imgId);const src=srcOf(r);if(!src)return null;return isPlain(s.edit)?src:renderEdit(src,s.edit,0)}
+function dropURL(id){for(const [k,u] of [...URLS])if(k.startsWith(id+'|')){URL.revokeObjectURL(u);URLS.delete(k)}}
 
 /* ---------- 小道具 ---------- */
 const $=s=>document.querySelector(s);
@@ -161,23 +172,27 @@ async function bitmap(blob){if(window.createImageBitmap){try{return await create
 const W=b=>b.width||b.naturalWidth,H=b=>b.height||b.naturalHeight;
 function cv(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;return c}
 const toBlob=(c,q=0.9)=>new Promise(r=>c.toBlob(b=>r(b),'image/jpeg',q));
-async function compress(file){const bm=await bitmap(file);const s=Math.min(1,2048/Math.max(W(bm),H(bm)));const c=cv(Math.round(W(bm)*s),Math.round(H(bm)*s));const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(bm,0,0,c.width,c.height);return toBlob(c,0.9)}
+async function compress(file){const bm=await bitmap(file);const s=Math.min(1,1600/Math.max(W(bm),H(bm)));const c=cv(Math.round(W(bm)*s),Math.round(H(bm)*s));const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(bm,0,0,c.width,c.height);return toBlob(c,0.82)}
 function autoLevel(c){const x=c.getContext('2d');const d=x.getImageData(0,0,c.width,c.height),a=d.data;const h=new Uint32Array(256);let n=0;
   for(let i=0;i<a.length;i+=16){h[(a[i]*.299+a[i+1]*.587+a[i+2]*.114)|0]++;n++}
   let lo=0,hi=255,acc=0;for(let v=0;v<256;v++){acc+=h[v];if(acc>=n*0.01){lo=v;break}}acc=0;for(let v=255;v>=0;v--){acc+=h[v];if(acc>=n*0.01){hi=v;break}}
   if(hi-lo<16)return;const sc=255/(hi-lo);for(let i=0;i<a.length;i+=4){for(let k=0;k<3;k++){const v=(a[i+k]-lo)*sc;a[i+k]=v<0?0:v>255?255:v}}x.putImageData(d,0,0)}
-async function render(orig,ed){const bm=await bitmap(orig);const w=W(bm),h=H(bm),r=((ed.rot||0)%4+4)%4;const sw=r%2?h:w,sh=r%2?w:h;
-  let c=cv(sw,sh);const x=c.getContext('2d');x.translate(sw/2,sh/2);x.rotate(r*Math.PI/2);x.drawImage(bm,-w/2,-h/2);
-  if(ed.square){const m=Math.min(sw,sh);const c2=cv(m,m);c2.getContext('2d').drawImage(c,(sw-m)/2,(sh-m)/2,m,m,0,0,m,m);c=c2}
-  if(ed.auto)autoLevel(c);return toBlob(c,0.9)}
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+function cropRect(sw,sh,cr){cr=cr||{};const sc=clamp(cr.scale||1,1,4);const side=Math.min(sw,sh)/sc;const cx=sw/2+clamp(cr.x||0,-1,1)*(sw-side)/2,cy=sh/2+clamp(cr.y||0,-1,1)*(sh-side)/2;return{sx:cx-side/2,sy:cy-side/2,side}}
+async function rotated(orig,rot){const bm=await bitmap(orig);const w=W(bm),h=H(bm),r=((rot||0)%4+4)%4;const sw=r%2?h:w,sh=r%2?w:h;
+  const c=cv(sw,sh);const x=c.getContext('2d');x.translate(sw/2,sh/2);x.rotate(r*Math.PI/2);x.drawImage(bm,-w/2,-h/2);return c}
+async function renderEdit(orig,ed,max){let c=await rotated(orig,ed.rot);
+  if(ed.square){const {sx,sy,side}=cropRect(c.width,c.height,ed.crop);const o=Math.round(max?Math.min(side,max):side);const c2=cv(o,o);c2.getContext('2d').drawImage(c,sx,sy,side,side,0,0,o,o);c=c2}
+  else if(max&&Math.max(c.width,c.height)>max){const k=max/Math.max(c.width,c.height);const c2=cv(Math.round(c.width*k),Math.round(c.height*k));c2.getContext('2d').drawImage(c,0,0,c2.width,c2.height);c=c2}
+  if(ed.auto)autoLevel(c);return toBlob(c,max?0.8:0.9)}
 async function withBanner(blob,text){const bm=await bitmap(blob);const c=cv(W(bm),H(bm));const x=c.getContext('2d');x.drawImage(bm,0,0);
   let fs=Math.round(c.width*0.065);const font=n=>`900 ${n}px "Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif`;x.font=font(fs);
   while(fs>10&&x.measureText(text).width>c.width*0.92){fs--;x.font=font(fs)}
   const bh=Math.round(fs*1.75);x.fillStyle='#ffe100';x.fillRect(0,0,c.width,bh);x.fillStyle='#111';x.textAlign='center';x.textBaseline='middle';x.fillText(text,c.width/2,bh/2+fs*0.04);return toBlob(c,0.92)}
-async function collage(blobs,n){const SZ=2048,cell=SZ/n,g=6;const c=cv(SZ,SZ);const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,SZ,SZ);
+async function collage(blobs,n){const SZ=1600,cell=SZ/n,g=6;const c=cv(SZ,SZ);const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,SZ,SZ);
   for(let i=0;i<blobs.length&&i<n*n;i++){const bm=await bitmap(blobs[i]);const w=W(bm),h=H(bm),inner=cell-g*2;const s=Math.max(inner/w,inner/h);const sw=inner/s,sh=inner/s;
     x.drawImage(bm,(w-sw)/2,(h-sh)/2,sw,sh,(i%n)*cell+g,Math.floor(i/n)*cell+g,inner,inner)}
-  return toBlob(c,0.9)}
+  return toBlob(c,0.82)}
 
 /* ============================================================
    画面
@@ -235,7 +250,7 @@ function shootHTML(it){const p=progress(it);const target=isSet(it)?'7〜10枚':'
   <div class="card"><button class="btn" style="width:100%" data-act="toPosta">POSTAへ完了を伝える</button>${it.status!=='撮影完了'?'<div class="note" style="margin-top:6px">まだ必須ショットが残っています。</div>':''}</div>
   <div class="btns" style="margin-top:12px"><button class="btn dng" data-act="delItem">この商品を削除</button></div>`}
 async function fillImgs(it){const v=UI.view;for(let i=0;i<it.shots.length;i++){const s=it.shots[i];
-    if(s.imgId){const u=await imgURL(s.imgId);if(UI.view!==v)return;const e=$('#th'+i);if(e)e.innerHTML=u?`<img src="${u}" alt="">`:'写真データなし<br>（再取り込み）'}
+    if(s.imgId){const u=await shotURL(s.imgId,s.edit,360);if(UI.view!==v)return;const e=$('#th'+i);if(e)e.innerHTML=u?`<img src="${u}" alt="">`:'写真データなし<br>（再取り込み）'}
     const m=S.models[s.key];if(m){const u=await imgURL(m);const e=$('#md'+i);if(e&&u)e.src=u}}}
 
 /* ---------- シート ---------- */
@@ -247,19 +262,39 @@ function gridSVG(img){const w=img.naturalWidth,h=img.naturalHeight;const m=Math.
   <rect x="${x0}" y="${y0}" width="${m}" height="${m}" fill="none" stroke="#ffe100" stroke-width="${w/200}"/></svg>`}
 function wireGrid(){document.querySelectorAll('.pv img').forEach(img=>{const go=()=>{const old=img.parentNode.querySelector('svg');if(old)old.remove();if(UI.grid)img.insertAdjacentHTML('afterend',gridSVG(img))};if(img.complete&&img.naturalWidth)go();else img.onload=go})}
 let EDI=null;
-async function openEdit(i){const it=getI(UI.view);const s=it.shots[i];if(!s||!s.imgId)return;EDI={id:it.id,i};const u=await imgURL(s.imgId);const ed=s.edit||{};
+async function openEdit(i){const it=getI(UI.view);const s=it.shots[i];if(!s||!s.imgId)return;const ed=s.edit||{};
+  const r=await idbGet(s.imgId);const src=srcOf(r);if(!src){toast('写真データがありません');return}
+  const u=await shotURL(s.imgId,ed,1200);const rc=await rotated(src,ed.rot);const rb=await toBlob(rc,0.8);
+  if(EDI&&EDI.rotURL)URL.revokeObjectURL(EDI.rotURL);EDI={id:it.id,i,rotURL:URL.createObjectURL(rb),w:rc.width,h:rc.height,crop:Object.assign({x:0,y:0,scale:1},ed.crop||{})};
   openSheet(`編集：${s.label}`,`<div class="pv"><img id="edImg" src="${u||''}" alt=""></div>
-  <div class="btns"><button class="btn ${ed.auto?'pri':''}" data-act="eAuto">✨ 自動補正${ed.auto?'（ON）':''}</button><button class="btn" data-act="eRot">⟳ 回転</button><button class="btn ${ed.square?'pri':''}" data-act="eSq">1:1${ed.square?'（ON）':''}</button><button class="btn" data-act="eUndo">元に戻す</button></div>
+  <div class="btns"><button class="btn ${ed.auto?'pri':''}" data-act="eAuto">✨ 自動補正${ed.auto?'（ON）':''}</button><button class="btn" data-act="eRot">⟳ 回転</button><button class="btn" data-act="eSq">${ed.square?'1:1をやめる（元画角）':'1:1にする'}</button><button class="btn" data-act="eUndo">元に戻す</button></div>
+  ${ed.square?`<div class="sec">画角調整（写真をドラッグで移動・スライダーで拡大）</div>
+  <div id="cropBox" class="cropbox"><img id="cropImg" src="${EDI.rotURL}" alt="" draggable="false"></div>
+  <div class="row" style="margin-top:8px"><span class="note">縮小</span><input id="cropZ" type="range" min="1" max="3" step="0.01" value="${EDI.crop.scale}" class="grow"><span class="note">拡大</span><button class="btn sm" data-act="cropReset">中央に戻す</button></div>`:''}
   <label class="row" style="margin-top:12px"><input type="checkbox" class="chk" id="gridOn" ${UI.grid?'checked':''}> グリッド（三分割＋中央線＋1:1枠）を表示</label>
-  <div class="note" style="margin-top:8px">編集は取り込んだ写真から作り直すので、「元に戻す」でいつでも取り込み直後の状態に戻せます。</div>`);wireGrid()}
-async function applyEdit(mut){const it=getI(EDI.id);const s=it.shots[EDI.i];const r=await idbGet(s.imgId);if(!r)return;s.edit=Object.assign({},s.edit||{});mut(s.edit);
-  r.cur=(s.edit.rot||s.edit.square||s.edit.auto)?await render(r.orig,s.edit):r.orig;await idbPut(r);dropURL(s.imgId);it.updatedAt=Date.now();save();await openEdit(EDI.i);render2()}
+  <div class="note" style="margin-top:8px">写真は取り込んだまま（元の画角）で保存し、編集は表示と書き出しのときに反映します。「元に戻す」でいつでも取り込み直後（1:1・中央）の状態に戻せます。</div>`);
+  wireGrid();if(ed.square)wireCrop()}
+function cropGrid(){const b=$('#cropBox');if(!b)return;const o=b.querySelector('svg');if(o)o.remove();if(!UI.grid)return;
+  b.insertAdjacentHTML('beforeend',`<svg viewBox="0 0 300 300" preserveAspectRatio="none"><line x1="100" y1="0" x2="100" y2="300"/><line x1="200" y1="0" x2="200" y2="300"/><line x1="0" y1="100" x2="300" y2="100"/><line x1="0" y1="200" x2="300" y2="200"/><line class="c" x1="150" y1="0" x2="150" y2="300"/><line class="c" x1="0" y1="150" x2="300" y2="150"/></svg>`)}
+function placeCrop(){const b=$('#cropBox'),im=$('#cropImg');if(!b||!im||!EDI)return;const box=b.clientWidth;const {sx,sy,side}=cropRect(EDI.w,EDI.h,EDI.crop);const k=box/side;
+  im.style.width=EDI.w*k+'px';im.style.height=EDI.h*k+'px';im.style.left=(-sx*k)+'px';im.style.top=(-sy*k)+'px'}
+function setCropCenter(cx,cy){const {side}=cropRect(EDI.w,EDI.h,EDI.crop);const fx=EDI.w>side?(clamp(cx,side/2,EDI.w-side/2)-EDI.w/2)/((EDI.w-side)/2):0;const fy=EDI.h>side?(clamp(cy,side/2,EDI.h-side/2)-EDI.h/2)/((EDI.h-side)/2):0;EDI.crop.x=fx;EDI.crop.y=fy}
+let cropT=null;
+function commitCrop(){clearTimeout(cropT);cropT=setTimeout(async()=>{const it=getI(EDI.id);const s=it&&it.shots[EDI.i];if(!s)return;
+  s.edit=Object.assign({},s.edit||{},{crop:{x:+EDI.crop.x.toFixed(4),y:+EDI.crop.y.toFixed(4),scale:+(+EDI.crop.scale).toFixed(3)}});dropURL(s.imgId);it.updatedAt=Date.now();UI.prepared=null;save();
+  const u=await shotURL(s.imgId,s.edit,1200);const e=$('#edImg');if(e&&u)e.src=u;fillImgs(it)},250)}
+function wireCrop(){const b=$('#cropBox'),im=$('#cropImg');if(!b)return;const go=()=>{placeCrop();cropGrid()};if(im.complete&&im.naturalWidth)go();else im.onload=go;
+  let st=null;b.addEventListener('pointerdown',e=>{const {sx,sy,side}=cropRect(EDI.w,EDI.h,EDI.crop);st={x:e.clientX,y:e.clientY,cx:sx+side/2,cy:sy+side/2,k:b.clientWidth/side};try{b.setPointerCapture(e.pointerId)}catch(_){}});
+  b.addEventListener('pointermove',e=>{if(!st)return;setCropCenter(st.cx-(e.clientX-st.x)/st.k,st.cy-(e.clientY-st.y)/st.k);placeCrop()});
+  const end=()=>{if(st){st=null;commitCrop()}};b.addEventListener('pointerup',end);b.addEventListener('pointercancel',end);
+  const z=$('#cropZ');z.addEventListener('input',()=>{EDI.crop.scale=+z.value;placeCrop()});z.addEventListener('change',()=>commitCrop())}
+async function applyEdit(mut){const it=getI(EDI.id);const s=it.shots[EDI.i];s.edit=Object.assign({},s.edit||{});mut(s);dropURL(s.imgId);it.updatedAt=Date.now();UI.prepared=null;save();await openEdit(EDI.i);fillImgs(it)}
 
 /* ---------- 取り込み ---------- */
 async function importPhoto(i,file){const it=getI(UI.view);const s=it.shots[i];if(!s)return;toast('取り込み中…');
   let blob;try{blob=await compress(file)}catch(e){toast('画像を読み込めませんでした');return}
   if(s.imgId){await idbDel(s.imgId).catch(()=>{});dropURL(s.imgId)}
-  const id=uid();await idbPut({id,orig:blob,cur:blob,at:Date.now()});s.imgId=id;s.edit={};finalize(it);save();UI.prepared=null;render2();
+  const id=uid();await idbPut({id,orig:blob,at:Date.now()});s.imgId=id;s.base={square:true,crop:{x:0,y:0,scale:1}};s.edit=JSON.parse(JSON.stringify(s.base));finalize(it);save();UI.prepared=null;render2();
   toast(it.status==='撮影完了'?'必須ショットがそろいました（撮影完了）':'取り込みました')}
 function fromSSSItem(o){const txt=[o.name,Array.isArray(o.tags)?o.tags.join(' '):o.tags,o.memo,o.ed].join(' ').normalize('NFKC');
   const acc=o.acc||{};let shoban='none',obi='none';
@@ -281,10 +316,24 @@ function fromURL(){let q;try{q=new URLSearchParams(location.search)}catch(e){ret
   else{if(pid&&!it.postaId)it.postaId=pid;if(sid&&!it.sssId)it.sssId=sid;save()}
   UI.view=it.id}
 
+/* ---------- 容量・永続化・移行 ---------- */
+const fmtMB=n=>n>=1073741824?(n/1073741824).toFixed(2)+' GB':(n/1048576).toFixed(1)+' MB';
+async function showUsage(){const e=$('#usage');if(!e)return;let photos=0,cnt=0;try{for(const r of await idbAll()){const b=srcOf(r);if(b){photos+=b.size+(r.cur&&r.orig?r.cur.size:0);cnt++}}}catch(_){}
+  let site=null;try{if(navigator.storage&&navigator.storage.estimate){const est=await navigator.storage.estimate();site=est.usage}}catch(_){}
+  const el=$('#usage');if(el)el.innerHTML=`${site!=null?`${fmtMB(site)}（このサイトの使用量）<br>`:''}写真データ ${fmtMB(photos)}（${cnt}枚）`}
+async function migrate101(){if(S.mig101)return;let recs=[];try{recs=await idbAll()}catch(e){return}
+  const byId=new Map();for(const it of S.items)for(const sh of it.shots)if(sh.imgId)byId.set(sh.imgId,sh);
+  for(const r of recs){if(!r||!r.cur)continue;try{const sh=byId.get(r.id);const edited=sh&&!isPlain(sh.edit);
+      // 編集済み：見た目を変えないため cur をマスターに繰り上げ、編集パラメータはリセット
+      const rec={id:r.id,orig:(edited||!r.orig)?r.cur:r.orig,at:r.at||Date.now()};await idbPut(rec);
+      if(sh){if(edited)sh.edit={};sh.base={}}}catch(e){}}
+  S.mig101=1;save()}
+try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{})}catch(e){}
+
 /* ---------- 書き出し ---------- */
 const safeName=t=>String(t||'koma').replace(/[\\\/:*?"<>|\r\n\t]/g,'').replace(/\s+/g,'_').slice(0,60)||'koma';
 async function exportFiles(it){const list=it.shots.filter(s=>s.imgId);const files=[];const base=safeName(it.title);
-  for(let i=0;i<list.length;i++){const r=await idbGet(list[i].imgId);if(!r||!r.cur)continue;let b=r.cur;
+  for(let i=0;i<list.length;i++){let b=await shotBlob(list[i]);if(!b)continue;
     if(files.length===0&&it.banner&&it.banner.on&&bannerText(it))b=await withBanner(b,bannerText(it));
     files.push(new File([b],`${base}_${String(files.length+1).padStart(2,'0')}.jpg`,{type:'image/jpeg'}))}
   return files}
@@ -306,16 +355,17 @@ const A={
   up(b){const it=getI(UI.view);const i=+b.dataset.i;if(i<1)return;[it.shots[i-1],it.shots[i]]=[it.shots[i],it.shots[i-1]];finalize(it);save();UI.prepared=null;render2()},
   down(b){const it=getI(UI.view);const i=+b.dataset.i;if(i>=it.shots.length-1)return;[it.shots[i+1],it.shots[i]]=[it.shots[i],it.shots[i+1]];finalize(it);save();UI.prepared=null;render2()},
   async photoDel(b){const it=getI(UI.view);const s=it.shots[+b.dataset.i];if(!s||!confirm(`「${s.label}」の写真を削除しますか？`))return;await idbDel(s.imgId).catch(()=>{});dropURL(s.imgId);
-    if(s.collage){it.shots.splice(+b.dataset.i,1)}else{s.imgId=null;s.edit={}}finalize(it);save();UI.prepared=null;render2()},
+    if(s.collage){it.shots.splice(+b.dataset.i,1)}else{s.imgId=null;s.edit={};s.base={}}finalize(it);save();UI.prepared=null;render2()},
   async shotDel(b){const it=getI(UI.view);const i=+b.dataset.i;const s=it.shots[i];if(!s||s.required)return;if(!confirm(`ショット「${s.label}」を削除しますか？`))return;if(s.imgId){await idbDel(s.imgId).catch(()=>{});dropURL(s.imgId)}it.shots.splice(i,1);finalize(it);save();UI.prepared=null;render2()},
   addNarabi(){const it=getI(UI.view);const s=mkShot('narabi',false);s.optional=true;it.shots.push(s);finalize(it);save();render2()},
   addCustom(){const it=getI(UI.view);const l=($('#cusL').value||'').trim();if(!l){toast('ラベルを入力してください');return}it.shots.push({key:'c_'+uid(),label:l,required:false,imgId:null,cover:false,custom:true});finalize(it);save();render2()},
   edit(b){openEdit(+b.dataset.i)},
-  eAuto(){applyEdit(e=>{e.auto=!e.auto})},eRot(){applyEdit(e=>{e.rot=((e.rot||0)+1)%4})},eSq(){applyEdit(e=>{e.square=!e.square})},eUndo(){applyEdit(e=>{e.rot=0;e.square=false;e.auto=false})},
-  async setModel(b){const it=getI(UI.view);const s=it.shots[+b.dataset.i];const r=await idbGet(s.imgId);if(!r)return;const old=S.models[s.key];const id='m_'+uid();
-    await idbPut({id,orig:r.cur,cur:r.cur,at:Date.now()});S.models[s.key]=id;if(old){await idbDel(old).catch(()=>{});dropURL(old)}save();render2();toast(`「${s.label}」のお手本に登録しました`)},
+  eAuto(){applyEdit(s=>{s.edit.auto=!s.edit.auto})},eRot(){applyEdit(s=>{s.edit.rot=((s.edit.rot||0)+1)%4})},eSq(){applyEdit(s=>{s.edit.square=!s.edit.square})},eUndo(){applyEdit(s=>{s.edit=JSON.parse(JSON.stringify(s.base||{}))})},
+  cropReset(){applyEdit(s=>{s.edit.crop={x:0,y:0,scale:1}})},
+  async setModel(b){const it=getI(UI.view);const s=it.shots[+b.dataset.i];const bl=await shotBlob(s);if(!bl)return;const old=S.models[s.key];const id='m_'+uid();
+    await idbPut({id,orig:bl,at:Date.now()});S.models[s.key]=id;if(old){await idbDel(old).catch(()=>{});dropURL(old)}save();render2();toast(`「${s.label}」のお手本に登録しました`)},
   async modelView(b){const u=await imgURL(S.models[b.dataset.k]);openSheet(`お手本：${(DEFS[b.dataset.k]||{}).label||''}`,`<div class="pv"><img src="${u}" alt=""></div><label class="row"><input type="checkbox" class="chk" id="gridOn" ${UI.grid?'checked':''}> グリッドを表示</label>`);wireGrid()},
-  async compare(b){const it=getI(UI.view);const s=it.shots[+b.dataset.i];const a=await imgURL(S.models[s.key]),c=await imgURL(s.imgId);
+  async compare(b){const it=getI(UI.view);const s=it.shots[+b.dataset.i];const a=await imgURL(S.models[s.key]),c=await shotURL(s.imgId,s.edit,1200);
     openSheet(`比較：${s.label}`,`<div class="cmp"><div><div class="note">お手本</div><div class="pv"><img src="${a}" alt=""></div></div><div><div class="note">今回</div><div class="pv"><img src="${c}" alt=""></div></div></div>
     <label class="row"><input type="checkbox" class="chk" id="gridOn" ${UI.grid?'checked':''}> グリッドを表示して画角を比べる</label>`);wireGrid()},
   colMode(){UI.col=!UI.col;UI.sel={};render2()},
@@ -323,13 +373,13 @@ const A={
     if(idx.length<2){toast('2枚以上選んでください');return}if(idx.length>n*n){toast(`${n}×${n}は${n*n}枚までです`);return}
     const bad=idx.filter(i=>READABLE.includes(it.shots[i].key));
     if(bad.length&&!confirm(`「${bad.map(i=>it.shots[i].label).join('」「')}」は文字が読めることが大事な写真です。分割すると文字が読めなくなります。それでも含めますか？`))return;
-    toast('合成中…');const blobs=[];for(const i of idx){const r=await idbGet(it.shots[i].imgId);if(r)blobs.push(r.cur)}
-    const out=await collage(blobs,n);const id=uid();await idbPut({id,orig:out,cur:out,at:Date.now()});
+    toast('合成中…');const blobs=[];for(const i of idx){const bl=await shotBlob(it.shots[i]);if(bl)blobs.push(bl)}
+    const out=await collage(blobs,n);const id=uid();await idbPut({id,orig:out,at:Date.now()});
     it.shots.push({key:'col_'+uid(),label:`分割合成 ${n}×${n}（${idx.length}枚）`,required:false,imgId:id,cover:false,custom:true,collage:true});
     UI.col=false;UI.sel={};finalize(it);save();UI.prepared=null;render2();toast('合成画像を追加しました（元の写真はそのままです）')},
   bnReset(){const it=getI(UI.view);it.banner=Object.assign({on:false},it.banner,{text:''});save();UI.prepared=null;render2()},
-  async bnPreview(){const it=getI(UI.view);const f=it.shots.find(s=>s.imgId);if(!f){toast('先に1枚目の写真を撮ってください');return}const r=await idbGet(f.imgId);if(!r)return;
-    const b=await withBanner(r.cur,bannerText(it));const u=URL.createObjectURL(b);openSheet('カバー文字入れのプレビュー',`<div class="pv"><img src="${u}" alt=""></div><div class="note">書き出す1枚目にだけ合成されます。元の写真は変わりません。</div>`)},
+  async bnPreview(){const it=getI(UI.view);const f=it.shots.find(s=>s.imgId);if(!f){toast('先に1枚目の写真を撮ってください');return}const fb=await shotBlob(f);if(!fb)return;
+    const b=await withBanner(fb,bannerText(it));const u=URL.createObjectURL(b);openSheet('カバー文字入れのプレビュー',`<div class="pv"><img src="${u}" alt=""></div><div class="note">書き出す1枚目にだけ合成されます。元の写真は変わりません。</div>`)},
   async exportPrep(){const it=getI(UI.view);toast('書き出しの準備中…');const files=await exportFiles(it);if(!files.length){toast('写真がありません');return}
     UI.prepared={id:it.id,files};render2();toast('準備できました。「共有シートを開く」を押してください')},
   async shareGo(){const P=UI.prepared;if(!P)return;const files=P.files;
@@ -343,9 +393,16 @@ const A={
     S.items=S.items.filter(x=>x.id!==it.id);save();A.back()},
   openSet(){openSheet('設定',`<div class="card"><div class="sec" style="margin-top:0">バックアップ</div><div class="note" style="margin-bottom:8px">⚠ バックアップには<b>写真は含まれません</b>（商品・撮影リスト・進捗などの情報のみ）。写真は端末内（このブラウザ）に保存されています。</div>
     <div class="btns"><button class="btn pri" data-act="bkOut">書き出す</button><label class="btn pick">読み込む（置き換え）<input type="file" id="bkIn" accept=".json,application/json,text/plain"></label></div></div>
+    <div class="card"><div class="sec" style="margin-top:0">写真の使用容量</div><div id="usage" class="prog">計算中…</div>
+    <button class="btn dng" style="margin-top:8px" data-act="purgeDone">撮影完了した商品の写真をまとめて削除</button><div class="note" style="margin-top:6px">写真だけを消します。商品・撮影リスト・進捗の情報は残り、そのショットは未撮影に戻ります。</div></div>
     <div class="card"><div class="fld"><label>POSTAのURL</label><input id="postaUrl" value="${esc(S.settings.postaUrl)}"></div></div>
     <div class="card"><button class="btn dng" data-act="wipe">すべてのデータを消去</button><div class="note" style="margin-top:6px">商品・写真・お手本がすべて消えます。</div></div>
-    <div class="note">KOMA v${APP_VER}／商品 ${S.items.length}件</div>`)},
+    <div class="note">KOMA v${APP_VER}／商品 ${S.items.length}件</div>`);showUsage()},
+  async purgeDone(){const its=S.items.filter(i=>i.status==='撮影完了');const ids=[];for(const it of its)for(const s of it.shots)if(s.imgId)ids.push(s.imgId);
+    if(!ids.length){toast('撮影完了した商品の写真はありません');return}let sz=0;for(const id of ids){const r=await idbGet(id).catch(()=>null);const b=srcOf(r);if(b)sz+=b.size}
+    if(!confirm(`撮影完了した商品 ${its.length}件の写真 ${ids.length}枚（約${fmtMB(sz)}）を削除します。商品と進捗の情報は残ります。よろしいですか？`))return;
+    for(const it of its){for(const s of it.shots)if(s.imgId){await idbDel(s.imgId).catch(()=>{});dropURL(s.imgId);s.imgId=null;s.edit={};s.base={}}it.shots=it.shots.filter(s=>!s.collage);finalize(it)}
+    save();showUsage();render2();toast(`${ids.length}枚の写真を削除しました`)},
   bkOut(){const t=JSON.stringify({app:'KOMA',key:KEY,ver:APP_VER,exportedAt:new Date().toISOString(),note:'写真は含まれません',data:S});const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'application/json'}));
     const d=new Date();a.download=`koma_backup_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1500);toast('書き出しました（写真は含まれません）')},
   async wipe(){if(!confirm('商品・写真・お手本をすべて消去します。元に戻せません。よろしいですか？'))return;await idbClear().catch(()=>{});URLS.forEach(u=>URL.revokeObjectURL(u));URLS.clear();S=defState();save();closeSheet();UI.view='list';render2();toast('消去しました')}
@@ -354,7 +411,7 @@ document.addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(
 document.addEventListener('change',async e=>{const el=e.target;
   if(el.dataset.shot!==undefined&&el.files&&el.files[0]){const f=el.files[0];el.value='';await importPhoto(+el.dataset.shot,f);return}
   if(el.dataset.col!==undefined){UI.sel[el.dataset.col]=el.checked;render2();return}
-  if(el.id==='gridOn'){UI.grid=el.checked;wireGrid();return}
+  if(el.id==='gridOn'){UI.grid=el.checked;wireGrid();cropGrid();return}
   if(el.id==='bnOn'){const it=getI(UI.view);it.banner=Object.assign({text:''},it.banner,{on:el.checked});save();UI.prepared=null;render2();return}
   if(el.id==='bnTx'){const it=getI(UI.view);const v=el.value.replace(/\s*\n\s*/g,' ').trim();it.banner=Object.assign({on:false},it.banner,{text:v===bannerDefault(it)?'':v});save();UI.prepared=null;return}
   if(el.id==='postaUrl'){S.settings.postaUrl=el.value.trim();save();toast('保存しました');return}
@@ -363,7 +420,7 @@ document.addEventListener('change',async e=>{const el=e.target;
     if(!d||!Array.isArray(d.items)){toast('KOMAのバックアップではありません');return}if(!confirm(`今のデータ（商品${S.items.length}件）を、バックアップ（商品${d.items.length}件）で置き換えます。写真はバックアップに含まれないため、端末に残っている写真だけが表示されます。よろしいですか？`))return;
     S=fix(d);save();closeSheet();UI.view='list';render2();toast('読み込みました')}
 });
-fromURL();render2();
+fromURL();render2();migrate101().then(()=>{URLS.forEach(u=>URL.revokeObjectURL(u));URLS.clear();render2()});
 </script>
 </body>
 </html>

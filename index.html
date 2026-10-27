@@ -87,7 +87,7 @@ label.pick input{position:absolute;inset:0;opacity:0;font-size:0}
 <div id="toast"></div>
 <script>
 'use strict';
-const APP_VER='1.0.2';
+const APP_VER='1.0.3';
 const KEY='koma_v1';
 const SETK=['単品','途中セット','全巻セット','その他'];
 const DEFS={
@@ -276,6 +276,7 @@ async function openEdit(i){const it=getI(UI.view);const s=it.shots[i];if(!s||!s.
   if(EDI&&EDI.rotURL)URL.revokeObjectURL(EDI.rotURL);EDI={id:it.id,i,rotURL:URL.createObjectURL(rb),w:rc.width,h:rc.height,crop:Object.assign({x:0,y:0,scale:1},ed.crop||{})};
   openSheet(`編集：${s.label}`,`<div class="pv"><img id="edImg" src="${u||''}" alt=""></div>
   <div class="btns"><button class="btn ${ed.auto?'pri':''}" data-act="eAuto">✨ 自動補正${ed.auto?'（ON）':''}</button><button class="btn" data-act="eRot">⟳ 回転</button><button class="btn" data-act="eSq">${ed.square?'1:1をやめる（元画角）':'1:1にする'}</button><button class="btn" data-act="eUndo">元に戻す</button></div>
+  <div id="oneBox" style="margin-top:8px">${oneBtnHTML(it,i)}</div>
   ${ed.square?`<div class="sec">画角調整（写真をドラッグで移動・スライダーで拡大）</div>
   <div id="cropBox" class="cropbox"><img id="cropImg" src="${EDI.rotURL}" alt="" draggable="false"></div>
   <div class="row" style="margin-top:8px"><span class="note">縮小</span><input id="cropZ" type="range" min="1" max="3" step="0.01" value="${EDI.crop.scale}" class="grow"><span class="note">拡大</span><button class="btn sm" data-act="cropReset">中央に戻す</button></div>`:''}
@@ -289,20 +290,20 @@ function placeCrop(){const b=$('#cropBox'),im=$('#cropImg');if(!b||!im||!EDI)ret
 function setCropCenter(cx,cy){const {side}=cropRect(EDI.w,EDI.h,EDI.crop);const fx=EDI.w>side?(clamp(cx,side/2,EDI.w-side/2)-EDI.w/2)/((EDI.w-side)/2):0;const fy=EDI.h>side?(clamp(cy,side/2,EDI.h-side/2)-EDI.h/2)/((EDI.h-side)/2):0;EDI.crop.x=fx;EDI.crop.y=fy}
 let cropT=null;
 function commitCrop(){clearTimeout(cropT);cropT=setTimeout(async()=>{const it=getI(EDI.id);const s=it&&it.shots[EDI.i];if(!s)return;
-  s.edit=Object.assign({},s.edit||{},{crop:{x:+EDI.crop.x.toFixed(4),y:+EDI.crop.y.toFixed(4),scale:+(+EDI.crop.scale).toFixed(3)}});dropURL(s.imgId);it.updatedAt=Date.now();UI.prepared=null;save();
+  s.edit=Object.assign({},s.edit||{},{crop:{x:+EDI.crop.x.toFixed(4),y:+EDI.crop.y.toFixed(4),scale:+(+EDI.crop.scale).toFixed(3)}});dropURL(s.imgId);it.updatedAt=Date.now();UI.prepared=null;ONE=null;save();const bx=$('#oneBox');if(bx)bx.innerHTML=oneBtnHTML(it,EDI.i);
   const u=await shotURL(s.imgId,s.edit,1200);const e=$('#edImg');if(e&&u)e.src=u;fillImgs(it)},250)}
 function wireCrop(){const b=$('#cropBox'),im=$('#cropImg');if(!b)return;const go=()=>{placeCrop();cropGrid()};if(im.complete&&im.naturalWidth)go();else im.onload=go;
   let st=null;b.addEventListener('pointerdown',e=>{const {sx,sy,side}=cropRect(EDI.w,EDI.h,EDI.crop);st={x:e.clientX,y:e.clientY,cx:sx+side/2,cy:sy+side/2,k:b.clientWidth/side};try{b.setPointerCapture(e.pointerId)}catch(_){}});
   b.addEventListener('pointermove',e=>{if(!st)return;setCropCenter(st.cx-(e.clientX-st.x)/st.k,st.cy-(e.clientY-st.y)/st.k);placeCrop()});
   const end=()=>{if(st){st=null;commitCrop()}};b.addEventListener('pointerup',end);b.addEventListener('pointercancel',end);
   const z=$('#cropZ');z.addEventListener('input',()=>{EDI.crop.scale=+z.value;placeCrop()});z.addEventListener('change',()=>commitCrop())}
-async function applyEdit(mut){const it=getI(EDI.id);const s=it.shots[EDI.i];s.edit=Object.assign({},s.edit||{});mut(s);dropURL(s.imgId);it.updatedAt=Date.now();UI.prepared=null;save();await openEdit(EDI.i);fillImgs(it)}
+async function applyEdit(mut){ONE=null;const it=getI(EDI.id);const s=it.shots[EDI.i];s.edit=Object.assign({},s.edit||{});mut(s);dropURL(s.imgId);it.updatedAt=Date.now();UI.prepared=null;ONE=null;save();await openEdit(EDI.i);fillImgs(it)}
 
 /* ---------- 取り込み ---------- */
 async function importPhoto(i,file){const it=getI(UI.view);const s=it.shots[i];if(!s)return;toast('取り込み中…');
   let blob;try{blob=await compress(file)}catch(e){toast('画像を読み込めませんでした');return}
   if(s.imgId){await idbDel(s.imgId).catch(()=>{});dropURL(s.imgId)}
-  const id=uid();await idbPut({id,orig:blob,at:Date.now()});s.imgId=id;s.base={square:true,crop:{x:0,y:0,scale:1}};s.edit=JSON.parse(JSON.stringify(s.base));finalize(it);save();UI.prepared=null;render2();
+  const id=uid();await idbPut({id,orig:blob,at:Date.now()});s.imgId=id;s.base={square:true,crop:{x:0,y:0,scale:1}};s.edit=JSON.parse(JSON.stringify(s.base));finalize(it);save();UI.prepared=null;ONE=null;render2();
   toast(it.status==='撮影完了'?'必須ショットがそろいました（撮影完了）':'取り込みました')}
 function fromSSSItem(o){const txt=[o.name,Array.isArray(o.tags)?o.tags.join(' '):o.tags,o.memo,o.ed].join(' ').normalize('NFKC');
   const acc=o.acc||{};let shoban='none',obi='none';
@@ -345,6 +346,15 @@ async function exportFiles(it){const list=it.shots.filter(s=>s.imgId);const file
     if(files.length===0&&it.banner&&it.banner.on&&bannerText(it))b=await withBanner(b,bannerText(it));
     files.push(new File([b],`${base}_${String(files.length+1).padStart(2,'0')}.jpg`,{type:'image/jpeg'}))}
   return files}
+// v1.0.3：1枚だけ保存。番号・ファイル名・表紙のバナーは一括書き出しと同じ規則（写真のあるショットの並び順）
+let ONE=null;
+function oneIndex(it,i){const list=it.shots.filter(s=>s.imgId);return list.indexOf(it.shots[i])}
+function oneBtnHTML(it,i){const k=oneIndex(it,i);if(k<0)return '';const name=`${safeName(it.title)}_${String(k+1).padStart(2,'0')}.jpg`;
+  return ONE&&ONE.id===it.id&&ONE.i===i?`<button class="btn ok" style="width:100%" data-act="oneGo">共有シートを開く（この1枚）→「画像を保存」</button><div class="note" style="margin-top:4px">${esc(ONE.file.name)}</div>`
+    :`<button class="btn" style="width:100%" data-act="onePrep">💾 この写真だけ保存（${esc(name)}）</button><div class="note" style="margin-top:4px">今の編集（画角・回転・自動補正${k===0?'・表紙の文字入れ':''}）を反映して保存します。</div>`}
+async function exportOne(it,i){const s=it.shots[i];const k=oneIndex(it,i);if(k<0)return null;let b=await shotBlob(s);if(!b)return null;
+  if(k===0&&it.banner&&it.banner.on&&bannerText(it))b=await withBanner(b,bannerText(it));
+  return new File([b],`${safeName(it.title)}_${String(k+1).padStart(2,'0')}.jpg`,{type:'image/jpeg'})}
 function download(files){files.forEach((f,i)=>setTimeout(()=>{const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=f.name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000)},i*400))}
 
 /* ============================================================
@@ -352,19 +362,19 @@ function download(files){files.forEach((f,i)=>setTimeout(()=>{const a=document.c
    ============================================================ */
 const A={
   closeSheet(){closeSheet()},
-  back(){UI.view='list';UI.col=false;UI.sel={};UI.prepared=null;render2();$('#view').scrollTop=0},
-  open(b){UI.view=b.dataset.id;UI.col=false;UI.sel={};UI.prepared=null;render2();$('#view').scrollTop=0},
+  back(){UI.view='list';UI.col=false;UI.sel={};UI.prepared=null;ONE=null;render2();$('#view').scrollTop=0},
+  open(b){UI.view=b.dataset.id;UI.col=false;UI.sel={};UI.prepared=null;ONE=null;render2();$('#view').scrollTop=0},
   addOpen(){openSheet('商品を追加',`<div class="fld"><label>商品名（これだけでOK）</label><input id="aT" placeholder="例：BORUTO 1〜15巻 途中セット"></div>
     <div class="fld"><label>区分</label><select id="aK">${SETK.map(x=>`<option>${x}</option>`).join('')}</select></div><button class="btn pri" style="width:100%" data-act="addDo">追加して撮影へ</button>
     <div class="note" style="margin-top:8px">初版・帯・特典・状態は撮影画面で切り替えられます。</div>`);setTimeout(()=>$('#aT').focus(),50)},
   addDo(){const t=($('#aT').value||'').trim();if(!t){toast('商品名を入力してください');return}let k=$('#aK').value;if(k==='単品'&&/\d+\s*[-〜~]\s*\d+\s*巻|セット/.test(t))k=/全巻/.test(t)?'全巻セット':'途中セット';
     const it=newItem({title:t,setk:k});S.items.push(it);save();closeSheet();UI.view=it.id;render2()},
-  flag(b){const it=getI(UI.view);const k=b.dataset.k,v=b.dataset.v;if(k==='bonus'||k==='condBad')it[k]=v==='1';else it[k]=v;regen(it);save();UI.prepared=null;render2()},
-  up(b){const it=getI(UI.view);const i=+b.dataset.i;if(i<1)return;[it.shots[i-1],it.shots[i]]=[it.shots[i],it.shots[i-1]];finalize(it);save();UI.prepared=null;render2()},
-  down(b){const it=getI(UI.view);const i=+b.dataset.i;if(i>=it.shots.length-1)return;[it.shots[i+1],it.shots[i]]=[it.shots[i],it.shots[i+1]];finalize(it);save();UI.prepared=null;render2()},
+  flag(b){const it=getI(UI.view);const k=b.dataset.k,v=b.dataset.v;if(k==='bonus'||k==='condBad')it[k]=v==='1';else it[k]=v;regen(it);save();UI.prepared=null;ONE=null;render2()},
+  up(b){const it=getI(UI.view);const i=+b.dataset.i;if(i<1)return;[it.shots[i-1],it.shots[i]]=[it.shots[i],it.shots[i-1]];finalize(it);save();UI.prepared=null;ONE=null;render2()},
+  down(b){const it=getI(UI.view);const i=+b.dataset.i;if(i>=it.shots.length-1)return;[it.shots[i+1],it.shots[i]]=[it.shots[i],it.shots[i+1]];finalize(it);save();UI.prepared=null;ONE=null;render2()},
   async photoDel(b){const it=getI(UI.view);const s=it.shots[+b.dataset.i];if(!s||!confirm(`「${s.label}」の写真を削除しますか？`))return;await idbDel(s.imgId).catch(()=>{});dropURL(s.imgId);
-    if(s.collage){it.shots.splice(+b.dataset.i,1)}else{s.imgId=null;s.edit={};s.base={}}finalize(it);save();UI.prepared=null;render2()},
-  async shotDel(b){const it=getI(UI.view);const i=+b.dataset.i;const s=it.shots[i];if(!s||s.required)return;if(!confirm(`ショット「${s.label}」を削除しますか？`))return;if(s.imgId){await idbDel(s.imgId).catch(()=>{});dropURL(s.imgId)}it.shots.splice(i,1);finalize(it);save();UI.prepared=null;render2()},
+    if(s.collage){it.shots.splice(+b.dataset.i,1)}else{s.imgId=null;s.edit={};s.base={}}finalize(it);save();UI.prepared=null;ONE=null;render2()},
+  async shotDel(b){const it=getI(UI.view);const i=+b.dataset.i;const s=it.shots[i];if(!s||s.required)return;if(!confirm(`ショット「${s.label}」を削除しますか？`))return;if(s.imgId){await idbDel(s.imgId).catch(()=>{});dropURL(s.imgId)}it.shots.splice(i,1);finalize(it);save();UI.prepared=null;ONE=null;render2()},
   addNarabi(){const it=getI(UI.view);const s=mkShot('narabi',false);s.optional=true;it.shots.push(s);finalize(it);save();render2()},
   addCustom(){const it=getI(UI.view);const l=($('#cusL').value||'').trim();if(!l){toast('ラベルを入力してください');return}it.shots.push({key:'c_'+uid(),label:l,required:false,imgId:null,cover:false,custom:true});finalize(it);save();render2()},
   edit(b){openEdit(+b.dataset.i)},
@@ -384,12 +394,17 @@ const A={
     toast('合成中…');const blobs=[];for(const i of idx){const bl=await shotBlob(it.shots[i]);if(bl)blobs.push(bl)}
     const out=await collage(blobs,n);const id=uid();await idbPut({id,orig:out,at:Date.now()});
     it.shots.push({key:'col_'+uid(),label:`分割合成 ${n}×${n}（${idx.length}枚）`,required:false,imgId:id,cover:false,custom:true,collage:true});
-    UI.col=false;UI.sel={};finalize(it);save();UI.prepared=null;render2();toast('合成画像を追加しました（元の写真はそのままです）')},
-  bnReset(){const it=getI(UI.view);it.banner=Object.assign({on:false},it.banner,{text:''});save();UI.prepared=null;render2()},
+    UI.col=false;UI.sel={};finalize(it);save();UI.prepared=null;ONE=null;render2();toast('合成画像を追加しました（元の写真はそのままです）')},
+  bnReset(){const it=getI(UI.view);it.banner=Object.assign({on:false},it.banner,{text:''});save();UI.prepared=null;ONE=null;render2()},
   async bnPreview(){const it=getI(UI.view);const f=it.shots.find(s=>s.imgId);if(!f){toast('先に1枚目の写真を撮ってください');return}const fb=await shotBlob(f);if(!fb)return;
     const b=await withBanner(fb,bannerText(it));const u=URL.createObjectURL(b);openSheet('カバー文字入れのプレビュー',`<div class="pv"><img src="${u}" alt=""></div><div class="note">書き出す1枚目にだけ合成されます。元の写真は変わりません。</div>`)},
   async exportPrep(){const it=getI(UI.view);if(it.banner&&it.banner.on&&!bannerFits(bannerText(it))&&!confirm('カバー文字が長すぎて、帯に収まりきりません（右端が切れます）。このまま書き出しますか？'))return;toast('書き出しの準備中…');const files=await exportFiles(it);if(!files.length){toast('写真がありません');return}
     UI.prepared={id:it.id,files};render2();toast('準備できました。「共有シートを開く」を押してください')},
+  async onePrep(){if(!EDI)return;const it=getI(EDI.id);const i=EDI.i;if(oneIndex(it,i)===0&&it.banner&&it.banner.on&&!bannerFits(bannerText(it))&&!confirm('カバー文字が長すぎて、帯に収まりきりません（右端が切れます）。このまま保存しますか？'))return;
+    const f=await exportOne(it,i);if(!f){toast('写真データがありません');return}ONE={id:it.id,i,file:f};const bx=$('#oneBox');if(bx)bx.innerHTML=oneBtnHTML(it,i);toast('準備できました。「共有シートを開く」を押してください')},
+  async oneGo(){if(!ONE)return;const files=[ONE.file];
+    if(navigator.canShare&&navigator.share&&navigator.canShare({files})){try{await navigator.share({files});return}catch(e){if(e&&e.name==='AbortError')return}}
+    download(files);toast('この環境では共有シートが使えないため、ダウンロードします')},
   async shareGo(){const P=UI.prepared;if(!P)return;const files=P.files;
     if(navigator.canShare&&navigator.share&&navigator.canShare({files})){try{await navigator.share({files});return}catch(e){if(e&&e.name==='AbortError')return}}
     download(files);toast('この環境では共有シートが使えないため、1枚ずつダウンロードします')},
@@ -420,8 +435,8 @@ document.addEventListener('change',async e=>{const el=e.target;
   if(el.dataset.shot!==undefined&&el.files&&el.files[0]){const f=el.files[0];el.value='';await importPhoto(+el.dataset.shot,f);return}
   if(el.dataset.col!==undefined){UI.sel[el.dataset.col]=el.checked;render2();return}
   if(el.id==='gridOn'){UI.grid=el.checked;wireGrid();cropGrid();return}
-  if(el.id==='bnOn'){const it=getI(UI.view);it.banner=Object.assign({text:''},it.banner,{on:el.checked});save();UI.prepared=null;render2();return}
-  if(el.id==='bnTx'){const it=getI(UI.view);const v=el.value.replace(/\s*\n\s*/g,' ').trim();it.banner=Object.assign({on:false},it.banner,{text:v===bannerDefault(it)?'':v});save();UI.prepared=null;const w=document.getElementById('bnWarn');if(w)w.hidden=bannerFits(bannerText(it));return}
+  if(el.id==='bnOn'){const it=getI(UI.view);it.banner=Object.assign({text:''},it.banner,{on:el.checked});save();UI.prepared=null;ONE=null;render2();return}
+  if(el.id==='bnTx'){const it=getI(UI.view);const v=el.value.replace(/\s*\n\s*/g,' ').trim();it.banner=Object.assign({on:false},it.banner,{text:v===bannerDefault(it)?'':v});save();UI.prepared=null;ONE=null;const w=document.getElementById('bnWarn');if(w)w.hidden=bannerFits(bannerText(it));return}
   if(el.id==='postaUrl'){S.settings.postaUrl=el.value.trim();save();toast('保存しました');return}
   if(el.id==='sssF'&&el.files[0]){await sssImport(el.files[0]);el.value='';return}
   if(el.id==='bkIn'&&el.files[0]){let o;try{o=JSON.parse(await el.files[0].text())}catch(_){toast('JSONを読み込めません');return}const d=o&&o.app==='KOMA'&&o.data?o.data:o;

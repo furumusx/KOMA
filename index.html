@@ -189,8 +189,8 @@ async function withBanner(blob,text){const bm=await bitmap(blob);const c=cv(W(bm
   const L=bannerLayout(x,c.width,text);
   x.fillStyle='#ffe100';x.fillRect(0,0,c.width,L.bh);   // v1.0.2：帯は横幅いっぱい・高さ固定（文字数で変えない）
   x.save();x.beginPath();x.rect(0,0,c.width,L.bh);x.clip();
-  x.font=L.font;x.fillStyle='#111';x.textAlign='left';x.textBaseline='middle';x.fillText(text,L.pad,L.bh/2+L.fs*0.04);x.restore();return toBlob(c,0.92)}
-// 帯の寸法：高さは基準文字サイズで固定。文字は左寄せ・開始位置固定。収まらなければ下限まで縮小（改行しない）
+  x.font=L.font;x.fillStyle='#111';x.textAlign='center';x.textBaseline='middle';x.fillText(text,c.width/2,L.bh/2+L.fs*0.04);x.restore();return toBlob(c,0.92)}
+// 帯の寸法：高さは基準文字サイズで固定。文字は中央寄せ。収まらなければ下限まで縮小（改行しない）
 const BN_FONT=n=>`900 ${n}px "Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif`;
 function bannerLayout(x,w,text){const base=Math.round(w*0.065),bh=Math.round(base*1.75),pad=Math.round(w*0.04),avail=w-pad*2,min=Math.max(10,Math.round(base*0.5));
   let fs=base;x.font=BN_FONT(fs);while(fs>min&&x.measureText(text).width>avail){fs--;x.font=BN_FONT(fs)}

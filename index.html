@@ -87,7 +87,7 @@ label.pick input{position:absolute;inset:0;opacity:0;font-size:0}
 <div id="toast"></div>
 <script>
 'use strict';
-const APP_VER='1.0.1';
+const APP_VER='1.0.2';
 const KEY='koma_v1';
 const SETK=['単品','途中セット','全巻セット','その他'];
 const DEFS={
@@ -186,9 +186,16 @@ async function renderEdit(orig,ed,max){let c=await rotated(orig,ed.rot);
   else if(max&&Math.max(c.width,c.height)>max){const k=max/Math.max(c.width,c.height);const c2=cv(Math.round(c.width*k),Math.round(c.height*k));c2.getContext('2d').drawImage(c,0,0,c2.width,c2.height);c=c2}
   if(ed.auto)autoLevel(c);return toBlob(c,max?0.8:0.9)}
 async function withBanner(blob,text){const bm=await bitmap(blob);const c=cv(W(bm),H(bm));const x=c.getContext('2d');x.drawImage(bm,0,0);
-  let fs=Math.round(c.width*0.065);const font=n=>`900 ${n}px "Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif`;x.font=font(fs);
-  while(fs>10&&x.measureText(text).width>c.width*0.92){fs--;x.font=font(fs)}
-  const bh=Math.round(fs*1.75);x.fillStyle='#ffe100';x.fillRect(0,0,c.width,bh);x.fillStyle='#111';x.textAlign='center';x.textBaseline='middle';x.fillText(text,c.width/2,bh/2+fs*0.04);return toBlob(c,0.92)}
+  const L=bannerLayout(x,c.width,text);
+  x.fillStyle='#ffe100';x.fillRect(0,0,c.width,L.bh);   // v1.0.2：帯は横幅いっぱい・高さ固定（文字数で変えない）
+  x.save();x.beginPath();x.rect(0,0,c.width,L.bh);x.clip();
+  x.font=L.font;x.fillStyle='#111';x.textAlign='left';x.textBaseline='middle';x.fillText(text,L.pad,L.bh/2+L.fs*0.04);x.restore();return toBlob(c,0.92)}
+// 帯の寸法：高さは基準文字サイズで固定。文字は左寄せ・開始位置固定。収まらなければ下限まで縮小（改行しない）
+const BN_FONT=n=>`900 ${n}px "Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif`;
+function bannerLayout(x,w,text){const base=Math.round(w*0.065),bh=Math.round(base*1.75),pad=Math.round(w*0.04),avail=w-pad*2,min=Math.max(10,Math.round(base*0.5));
+  let fs=base;x.font=BN_FONT(fs);while(fs>min&&x.measureText(text).width>avail){fs--;x.font=BN_FONT(fs)}
+  return{bh,pad,fs,font:BN_FONT(fs),fits:x.measureText(text).width<=avail,shrunk:fs<base}}
+function bannerFits(text){if(!text)return true;const c=cv(1200,10);return bannerLayout(c.getContext('2d'),1200,text).fits}
 async function collage(blobs,n){const SZ=1600,cell=SZ/n,g=6;const c=cv(SZ,SZ);const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,SZ,SZ);
   for(let i=0;i<blobs.length&&i<n*n;i++){const bm=await bitmap(blobs[i]);const w=W(bm),h=H(bm),inner=cell-g*2;const s=Math.max(inner/w,inner/h);const sw=inner/s,sh=inner/s;
     x.drawImage(bm,(w-sw)/2,(h-sh)/2,sw,sh,(i%n)*cell+g,Math.floor(i/n)*cell+g,inner,inner)}
@@ -242,7 +249,8 @@ function shootHTML(it){const p=progress(it);const target=isSet(it)?'7〜10枚':'
     <label class="row" style="margin-bottom:8px"><input type="checkbox" class="chk" id="bnOn" ${it.banner&&it.banner.on?'checked':''}> 黄色バナーを入れる</label>
     <div class="inline"><input id="bnTx" value="${esc(bannerText(it))}"><button class="btn sm" data-act="bnReset">自動に戻す</button></div>
     <div class="btns" style="margin-top:8px"><button class="btn" data-act="bnPreview">プレビュー</button></div>
-    <div class="note" style="margin-top:6px">文言は1行だけ。元の写真は加工しません。</div></div>
+    <div class="note warnc" id="bnWarn" style="margin-top:6px;color:var(--neg);font-weight:700"${bannerFits(bannerText(it))?' hidden':''}>⚠️ 文字が長すぎて、最小サイズまで縮めても帯に収まりません。文言を短くしてください。</div>
+    <div class="note" style="margin-top:6px">文言は1行だけ。帯の幅と高さはタイトルによらず同じです（長い文言は文字を小さくして1行に収めます）。元の写真は加工しません。</div></div>
   <div class="card"><div class="sec" style="margin-top:0">書き出し</div>
     ${UI.prepared&&UI.prepared.id===it.id?`<button class="btn ok" style="width:100%" data-act="shareGo">共有シートを開く（${UI.prepared.files.length}枚）→「画像を保存」</button><div class="note" style="margin-top:6px">ファイル名：${esc(UI.prepared.files[0].name)} ほか</div>`
       :`<button class="btn pri" style="width:100%" data-act="exportPrep" ${p.photos?'':'disabled'}>アルバムへ保存（${p.photos}枚・この順番で）</button>`}
@@ -380,7 +388,7 @@ const A={
   bnReset(){const it=getI(UI.view);it.banner=Object.assign({on:false},it.banner,{text:''});save();UI.prepared=null;render2()},
   async bnPreview(){const it=getI(UI.view);const f=it.shots.find(s=>s.imgId);if(!f){toast('先に1枚目の写真を撮ってください');return}const fb=await shotBlob(f);if(!fb)return;
     const b=await withBanner(fb,bannerText(it));const u=URL.createObjectURL(b);openSheet('カバー文字入れのプレビュー',`<div class="pv"><img src="${u}" alt=""></div><div class="note">書き出す1枚目にだけ合成されます。元の写真は変わりません。</div>`)},
-  async exportPrep(){const it=getI(UI.view);toast('書き出しの準備中…');const files=await exportFiles(it);if(!files.length){toast('写真がありません');return}
+  async exportPrep(){const it=getI(UI.view);if(it.banner&&it.banner.on&&!bannerFits(bannerText(it))&&!confirm('カバー文字が長すぎて、帯に収まりきりません（右端が切れます）。このまま書き出しますか？'))return;toast('書き出しの準備中…');const files=await exportFiles(it);if(!files.length){toast('写真がありません');return}
     UI.prepared={id:it.id,files};render2();toast('準備できました。「共有シートを開く」を押してください')},
   async shareGo(){const P=UI.prepared;if(!P)return;const files=P.files;
     if(navigator.canShare&&navigator.share&&navigator.canShare({files})){try{await navigator.share({files});return}catch(e){if(e&&e.name==='AbortError')return}}
@@ -413,7 +421,7 @@ document.addEventListener('change',async e=>{const el=e.target;
   if(el.dataset.col!==undefined){UI.sel[el.dataset.col]=el.checked;render2();return}
   if(el.id==='gridOn'){UI.grid=el.checked;wireGrid();cropGrid();return}
   if(el.id==='bnOn'){const it=getI(UI.view);it.banner=Object.assign({text:''},it.banner,{on:el.checked});save();UI.prepared=null;render2();return}
-  if(el.id==='bnTx'){const it=getI(UI.view);const v=el.value.replace(/\s*\n\s*/g,' ').trim();it.banner=Object.assign({on:false},it.banner,{text:v===bannerDefault(it)?'':v});save();UI.prepared=null;return}
+  if(el.id==='bnTx'){const it=getI(UI.view);const v=el.value.replace(/\s*\n\s*/g,' ').trim();it.banner=Object.assign({on:false},it.banner,{text:v===bannerDefault(it)?'':v});save();UI.prepared=null;const w=document.getElementById('bnWarn');if(w)w.hidden=bannerFits(bannerText(it));return}
   if(el.id==='postaUrl'){S.settings.postaUrl=el.value.trim();save();toast('保存しました');return}
   if(el.id==='sssF'&&el.files[0]){await sssImport(el.files[0]);el.value='';return}
   if(el.id==='bkIn'&&el.files[0]){let o;try{o=JSON.parse(await el.files[0].text())}catch(_){toast('JSONを読み込めません');return}const d=o&&o.app==='KOMA'&&o.data?o.data:o;

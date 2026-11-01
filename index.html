@@ -87,7 +87,7 @@ label.pick input{position:absolute;inset:0;opacity:0;font-size:0}
 <div id="toast"></div>
 <script>
 'use strict';
-const APP_VER='1.0.3';
+const APP_VER='1.0.4';
 const KEY='koma_v1';
 const SETK=['単品','途中セット','全巻セット','その他'];
 const DEFS={
@@ -105,8 +105,8 @@ const READABLE=['okuduke','obi'];   // 文字が読めることが価値の証�
 
 /* ---------- 保存（メタはlocalStorage、写真はIndexedDB） ---------- */
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
-function defState(){return{ver:1,items:[],models:{},settings:{postaUrl:'https://furumusx.github.io/posta/'}}}
-function fix(s){const d=defState();if(!s||typeof s!=='object')return d;if(!Array.isArray(s.items))s.items=[];if(!s.models||typeof s.models!=='object')s.models={};s.settings=Object.assign(d.settings,s.settings||{});return s}
+function defState(){return{ver:1,items:[],models:{},settings:{sssUrl:'https://furumusx.github.io/SedoScope/'}}}
+function fix(s){const d=defState();if(!s||typeof s!=='object')return d;if(!Array.isArray(s.items))s.items=[];if(!s.models||typeof s.models!=='object')s.models={};s.settings=Object.assign(d.settings,s.settings||{});if(typeof s.settings.sssUrl!=='string')s.settings.sssUrl=defState().settings.sssUrl;return s}
 let S=(()=>{try{const t=localStorage.getItem(KEY);if(t)return fix(JSON.parse(t))}catch(e){}return defState()})();
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));return true}catch(e){toast('保存できませんでした');return false}}
 let DBP=null;
@@ -255,7 +255,7 @@ function shootHTML(it){const p=progress(it);const target=isSet(it)?'7〜10枚':'
     ${UI.prepared&&UI.prepared.id===it.id?`<button class="btn ok" style="width:100%" data-act="shareGo">共有シートを開く（${UI.prepared.files.length}枚）→「画像を保存」</button><div class="note" style="margin-top:6px">ファイル名：${esc(UI.prepared.files[0].name)} ほか</div>`
       :`<button class="btn pri" style="width:100%" data-act="exportPrep" ${p.photos?'':'disabled'}>アルバムへ保存（${p.photos}枚・この順番で）</button>`}
     <div class="note" style="margin-top:6px">JPEG・1:1の枠を基準に揃えた構図で、メルカリ／Yahoo!フリマ／ラクマ／ヤフオク共通。ヤフオクは先頭10枚を使ってください。</div></div>
-  <div class="card"><button class="btn" style="width:100%" data-act="toPosta">POSTAへ完了を伝える</button>${it.status!=='撮影完了'?'<div class="note" style="margin-top:6px">まだ必須ショットが残っています。</div>':''}</div>
+  <div class="card"><button class="btn" style="width:100%" data-act="toSSS">SSSで開く</button>${it.status!=='撮影完了'?'<div class="note" style="margin-top:6px">まだ必須ショットが残っています。</div>':''}</div>
   <div class="btns" style="margin-top:12px"><button class="btn dng" data-act="delItem">この商品を削除</button></div>`}
 async function fillImgs(it){const v=UI.view;for(let i=0;i<it.shots.length;i++){const s=it.shots[i];
     if(s.imgId){const u=await shotURL(s.imgId,s.edit,360);if(UI.view!==v)return;const e=$('#th'+i);if(e)e.innerHTML=u?`<img src="${u}" alt="">`:'写真データなし<br>（再取り込み）'}
@@ -408,7 +408,8 @@ const A={
   async shareGo(){const P=UI.prepared;if(!P)return;const files=P.files;
     if(navigator.canShare&&navigator.share&&navigator.canShare({files})){try{await navigator.share({files});return}catch(e){if(e&&e.name==='AbortError')return}}
     download(files);toast('この環境では共有シートが使えないため、1枚ずつダウンロードします')},
-  toPosta(){const it=getI(UI.view);const base=String(S.settings.postaUrl||'').trim();if(!base){toast('設定でPOSTAのURLを入力してください');return}
+  toSSS(){const it=getI(UI.view);const base=String(S.settings.sssUrl||'').trim();if(!base){toast('設定でSSSのURLを入力してください');return}
+    if(!/^https?:\/\//i.test(base)){toast('SSSのURLは http:// か https:// で始まるものを入力してください');return}
     if(!it.sssId&&!it.postaId){toast('この商品はSSS／POSTAとつながっていないため、伝える先がありません');return}
     const ps=[['src','koma'],['act','shot'],['sssId',it.sssId],['postaId',it.postaId]].filter(([k,v])=>v).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&');
     location.href=base+(base.includes('?')?'&':'?')+ps},
@@ -418,7 +419,7 @@ const A={
     <div class="btns"><button class="btn pri" data-act="bkOut">書き出す</button><label class="btn pick">読み込む（置き換え）<input type="file" id="bkIn" accept=".json,application/json,text/plain"></label></div></div>
     <div class="card"><div class="sec" style="margin-top:0">写真の使用容量</div><div id="usage" class="prog">計算中…</div>
     <button class="btn dng" style="margin-top:8px" data-act="purgeDone">撮影完了した商品の写真をまとめて削除</button><div class="note" style="margin-top:6px">写真だけを消します。商品・撮影リスト・進捗の情報は残り、そのショットは未撮影に戻ります。</div></div>
-    <div class="card"><div class="fld"><label>POSTAのURL</label><input id="postaUrl" value="${esc(S.settings.postaUrl)}"></div></div>
+    <div class="card"><div class="fld"><label>SSSのURL</label><input id="sssUrl" value="${esc(S.settings.sssUrl)}"></div></div>
     <div class="card"><button class="btn dng" data-act="wipe">すべてのデータを消去</button><div class="note" style="margin-top:6px">商品・写真・お手本がすべて消えます。</div></div>
     <div class="note">KOMA v${APP_VER}／商品 ${S.items.length}件</div>`);showUsage()},
   async purgeDone(){const its=S.items.filter(i=>i.status==='撮影完了');const ids=[];for(const it of its)for(const s of it.shots)if(s.imgId)ids.push(s.imgId);
@@ -437,7 +438,7 @@ document.addEventListener('change',async e=>{const el=e.target;
   if(el.id==='gridOn'){UI.grid=el.checked;wireGrid();cropGrid();return}
   if(el.id==='bnOn'){const it=getI(UI.view);it.banner=Object.assign({text:''},it.banner,{on:el.checked});save();UI.prepared=null;ONE=null;render2();return}
   if(el.id==='bnTx'){const it=getI(UI.view);const v=el.value.replace(/\s*\n\s*/g,' ').trim();it.banner=Object.assign({on:false},it.banner,{text:v===bannerDefault(it)?'':v});save();UI.prepared=null;ONE=null;const w=document.getElementById('bnWarn');if(w)w.hidden=bannerFits(bannerText(it));return}
-  if(el.id==='postaUrl'){S.settings.postaUrl=el.value.trim();save();toast('保存しました');return}
+  if(el.id==='sssUrl'){S.settings.sssUrl=el.value.trim();save();toast('保存しました');return}
   if(el.id==='sssF'&&el.files[0]){await sssImport(el.files[0]);el.value='';return}
   if(el.id==='bkIn'&&el.files[0]){let o;try{o=JSON.parse(await el.files[0].text())}catch(_){toast('JSONを読み込めません');return}const d=o&&o.app==='KOMA'&&o.data?o.data:o;
     if(!d||!Array.isArray(d.items)){toast('KOMAのバックアップではありません');return}if(!confirm(`今のデータ（商品${S.items.length}件）を、バックアップ（商品${d.items.length}件）で置き換えます。写真はバックアップに含まれないため、端末に残っている写真だけが表示されます。よろしいですか？`))return;

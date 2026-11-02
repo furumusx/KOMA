@@ -97,20 +97,23 @@ label.pick input{position:absolute;inset:0;opacity:0;font-size:0}
 <div id="toast"></div>
 <script>
 'use strict';
-const APP_VER='1.1.0';
+const APP_VER='1.1.1';
 const KEY='koma_v1';
 const SETK=['単品','途中セット','全巻セット','その他'];
+// v1.1.1：guide は売れている出品の画角調査（sold_photo_angles_2026-11-02.md・25件141枚）の実測に基づく
 const DEFS={
-  whole:{label:'全体（表紙側）',guide:'正面から。本全体が入り、上下左右に少し余白'},
-  spine:{label:'背表紙・巻数の並び',guide:'正面・水平。本の高さいっぱいに写し、背表紙の文字が読める距離'},
-  coverup:{label:'表紙アップ',guide:'正面から。表紙いっぱいに写し、タイトルの文字が読める距離'},
-  edge:{label:'小口・天側',guide:'立てた本を斜め上から。小口の面が見える角度'},
-  okuduke:{label:'奥付（初版の証拠）',guide:'刷数の文字が読める距離で正面から。ピント優先'},
-  obi:{label:'帯アップ',guide:'帯の文字が読める距離で正面から'},
-  bonus:{label:'特典・付属品',guide:'平置き俯瞰。全部が1枚に入る構図'},
-  cond:{label:'状態が気になる箇所',guide:'傷・汚れに寄って撮影。場所が分かるよう少し引いた版も任意で'},
-  narabi:{label:'表紙並べ（巻順）',guide:'表紙を巻順に並べて真上から。多い場合は複数枚に分けてもよい'}
+  whole:{label:'全体（表紙側）',guide:'セットでは背表紙がカバーになる（売れている出品のカバーは背表紙主体）。このカットでは全体の量感が伝わる画角で。単品では表紙側で全体を見せる'},
+  spine:{label:'背表紙・巻数の並び',guide:'立てかけて1列に。巻数が端から端まで読める距離で。30巻超は2段組み可、50巻前後からは区間ごとの寄りも撮る'},
+  coverup:{label:'表紙アップ',guide:'全巻分は不要。1巻と最終巻など代表の数冊だけ、表紙いっぱいに正面から'},
+  edge:{label:'小口・天側',guide:'状態の証拠写真。立てた列を斜め上から、小口を画面いっぱいに。ヤケ・シミ・反りが判別できる距離まで寄る。区間ごとに複数枚でもよい'},
+  okuduke:{label:'奥付（初版の証拠）',guide:'初版を売りにする設定では必須になる。売れている出品は奥付を撮っていないため、初版の証拠として見せる差別化用'},
+  obi:{label:'帯アップ',guide:'帯付きを売りにする設定では必須になる。帯は背表紙や並べの中でも読める画角に収めるのが型。このカットは帯の状態を寄って見せる差別化用'},
+  bonus:{label:'特典・付属品',guide:'1枚目に一緒に写し込むか、平置きで全点が入る専用1枚。袋入りのまま全体像が分かる距離で'},
+  cond:{label:'状態が気になる箇所',guide:'傷・折れがある場合のみ。場所が分かる引きと、寄りの2枚で'},
+  narabi:{label:'表紙並べ（巻順）',guide:'やるなら全巻分を完遂する。表紙を巻順に6〜12冊ずつのグリッドで真上から。帯付きの巻は帯が見える向きで'},
+  back:{label:'裏表紙並べ',guide:'バーコード面を巻順にグリッドで並べて真上から。全巻そろっていることの確認用。表紙並べの代替になる'}
 };
+const OPT_KEYS=['narabi','back'];   // v1.1.1：任意カット（「任意ショットを追加」のボタンから足す。必須にはしない）
 const READABLE=['okuduke','obi'];   // 文字が読めることが価値の証拠写真（分割合成しない）
 
 /* ---------- 保存（メタはlocalStorage、写真はIndexedDB） ---------- */
@@ -291,10 +294,10 @@ function listHTML(){
     <div style="text-align:right"><div class="prog">必須 ${p.done}/${p.all}</div>${it.status==='撮影完了'?'<span class="badge done">撮影完了</span>':''}</div></div></div>`}).join('')||'<div class="empty">商品がありません。「＋ 手動で追加」か「SSSから取り込む」、またはPOSTA／SSSからの連携で追加できます。</div>'}
   <div class="note" style="text-align:center;margin-top:16px">KOMA v${APP_VER}</div>`}
 function seg(name,opts,cur){return `<div class="seg">${opts.map(([v,t])=>`<button class="${String(cur)===String(v)?'on':''}" data-act="flag" data-k="${name}" data-v="${v}">${t}</button>`).join('')}</div>`}
-function shootHTML(it){const p=progress(it);const target=isSet(it)?'7〜10枚':'4〜6枚';const ck=coverKey(it);
+function shootHTML(it){const p=progress(it);const target=isSet(it)?'4〜7枚':'4〜6枚';const ck=coverKey(it);
   const sel=Object.keys(UI.sel).filter(k=>UI.sel[k]);
   return `<div class="guide">📷 背景は下と後ろを同じ素材で覆い、境目を入れない／昼間の窓際の自然光で</div>
-  <div class="card"><div class="row"><div class="grow"><div class="prog" style="font-size:18px">必須 ${p.done}/${p.all}</div><div class="note">目安：${isSet(it)?'セット':'単品'} ${target}（いま ${p.photos}枚・目安で必須ではありません）</div></div>${it.status==='撮影完了'?'<span class="badge done">撮影完了</span>':''}</div></div>
+  <div class="card"><div class="row"><div class="grow"><div class="prog" style="font-size:18px">必須 ${p.done}/${p.all}</div><div class="note">目安：${isSet(it)?'セット':'単品'} ${target}（いま ${p.photos}枚・目安で必須ではありません）</div><div class="note">売れているセット出品は4〜7枚が標準。高額でも背表紙（巻数が追える）＋小口（状態が分かる）がそろえば成立する</div></div>${it.status==='撮影完了'?'<span class="badge done">撮影完了</span>':''}</div></div>
   <div class="card">
     <div class="flag"><span>区分</span>${seg('setk',SETK.map(x=>[x,x.replace('セット','')]),it.setk)}</div>
     <div class="flag"><span>初版</span>${seg('shoban',[['all','全巻'],['part','一部'],['none','なし']],it.shoban)}</div>
@@ -314,8 +317,8 @@ function shootHTML(it){const p=progress(it);const target=isSet(it)?'7〜10枚':'
       <button class="btn sm" data-act="up" data-i="${i}" ${i===0?'disabled':''}>↑</button><button class="btn sm" data-act="down" data-i="${i}" ${i===it.shots.length-1?'disabled':''}>↓</button>
       ${!s.required?`<button class="btn sm dng" data-act="shotDel" data-i="${i}">ショット削除</button>`:''}</div></div></div></div>`}).join('')}
   <div class="card"><div class="sec" style="margin-top:0">任意ショットを追加</div>
-    ${isSet(it)&&!it.shots.some(s=>s.key==='narabi')?`<div class="btns" style="margin-bottom:8px"><button class="btn sm" data-act="addNarabi">＋ 表紙並べ（巻順）</button></div>`:''}
-    <div class="inline"><input id="cusL" placeholder="ラベル（例：裏表紙）"><button class="btn" data-act="addCustom">追加</button></div></div>
+    ${(()=>{const ks=isSet(it)?OPT_KEYS.filter(k=>!it.shots.some(s=>s.key===k)):[];return ks.length?`<div class="btns" style="margin-bottom:8px">${ks.map(k=>`<button class="btn sm" data-act="addOpt" data-k="${k}">＋ ${esc(DEFS[k].label)}</button>`).join('')}</div>`:''})()}
+    <div class="inline"><input id="cusL" placeholder="ラベル（例：特典の裏面）"><button class="btn" data-act="addCustom">追加</button></div></div>
   <div class="card"><div class="sec" style="margin-top:0">分割合成（表紙並べ・特典一式を1枚に）</div>
     ${UI.col?`<div class="note" style="margin-bottom:8px">写真のチェックを入れて選んでください（選択中 ${sel.length}枚）。奥付・帯アップは文字が読めなくなるため、分割合成には向きません。</div>
       <div class="btns"><button class="btn pri" data-act="colDo" data-n="2">2×2で作る</button><button class="btn pri" data-act="colDo" data-n="3">3×3で作る</button><button class="btn" data-act="colMode">やめる</button></div>`
@@ -492,7 +495,7 @@ const A={
   async photoDel(b){const it=getI(UI.view);const s=it.shots[+b.dataset.i];if(!s||!confirm(`「${s.label}」の写真を削除しますか？`))return;await idbDel(s.imgId).catch(()=>{});dropURL(s.imgId);
     if(s.collage){it.shots.splice(+b.dataset.i,1)}else{s.imgId=null;s.edit={};s.base={}}finalize(it);save();UI.prepared=null;ONE=null;render2()},
   async shotDel(b){const it=getI(UI.view);const i=+b.dataset.i;const s=it.shots[i];if(!s||s.required)return;if(!confirm(`ショット「${s.label}」を削除しますか？`))return;if(s.imgId){await idbDel(s.imgId).catch(()=>{});dropURL(s.imgId)}it.shots.splice(i,1);finalize(it);save();UI.prepared=null;ONE=null;render2()},
-  addNarabi(){const it=getI(UI.view);const s=mkShot('narabi',false);s.optional=true;it.shots.push(s);finalize(it);save();render2()},
+  addOpt(b){const k=b.dataset.k;if(!OPT_KEYS.includes(k))return;const it=getI(UI.view);if(it.shots.some(s=>s.key===k))return;const s=mkShot(k,false);s.optional=true;it.shots.push(s);finalize(it);save();render2()},
   addCustom(){const it=getI(UI.view);const l=($('#cusL').value||'').trim();if(!l){toast('ラベルを入力してください');return}it.shots.push({key:'c_'+uid(),label:l,required:false,imgId:null,cover:false,custom:true});finalize(it);save();render2()},
   edit(b){openEdit(+b.dataset.i)},
   eAuto(){applyEdit(s=>{s.edit.auto=!s.edit.auto})},eRot(){applyEdit(s=>{s.edit.rot=((s.edit.rot||0)+1)%4})},eSq(){applyEdit(s=>{s.edit.square=!s.edit.square})},

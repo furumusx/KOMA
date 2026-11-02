@@ -78,6 +78,16 @@ label.pick input{position:absolute;inset:0;opacity:0;font-size:0}
 #toast.on{opacity:1}
 .inline{display:flex;gap:var(--sp2)}
 .inline input{flex:1;min-width:0;background:var(--card2);border:1px solid var(--line);border-radius:var(--r-md);height:44px;padding:0 var(--sp2)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{height:32px;padding:0 12px;border-radius:16px;border:1px solid var(--line);background:var(--card2);font-size:13px;color:var(--mut)}
+.chip.on{background:var(--acc);border-color:var(--acc);color:#04203f;font-weight:700}
+.mk{position:absolute;width:24px;height:24px;margin:-12px 0 0 -12px;border:3px solid #ffe100;border-radius:50%;box-shadow:0 0 0 2px rgba(0,0,0,.6);pointer-events:none}
+.mk[hidden]{display:none}
+.blst{margin:0 0 var(--sp2);font-size:13px;color:#bcd8ff}
+.blst[hidden]{display:none}
+.blst .bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-bottom:4px}
+.blst .bar i{display:block;height:100%;width:40%;background:var(--acc);animation:blbar 1.1s linear infinite}
+@keyframes blbar{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
 </style>
 </head>
 <body>
@@ -87,7 +97,7 @@ label.pick input{position:absolute;inset:0;opacity:0;font-size:0}
 <div id="toast"></div>
 <script>
 'use strict';
-const APP_VER='1.0.4';
+const APP_VER='1.1.0';
 const KEY='koma_v1';
 const SETK=['単品','途中セット','全巻セット','その他'];
 const DEFS={
@@ -118,7 +128,9 @@ const idbDel=id=>tx('readwrite',st=>st.delete(id));
 const idbClear=()=>tx('readwrite',st=>st.clear());
 const idbAll=()=>tx('readonly',st=>st.getAll());
 const URLS=new Map();
-const isPlain=ed=>!ed||(!ed.rot&&!ed.square&&!ed.auto);
+const hasBlur=ed=>!!(ed&&ed.blur&&ed.blur.mask);   // v1.1.0：s.edit.blur={mask:マスク画像ID('k_…'),x,y:タップ位置（回転前の元写真に対する0〜1）,lvl:'w'|'m'|'s'}
+const isPlain=ed=>!ed||(!ed.rot&&!ed.square&&!ed.auto&&!hasBlur(ed));
+const idbKeys=()=>tx('readonly',st=>st.getAllKeys());
 const srcOf=r=>r&&(r.orig||r.cur)||null;
 async function shotURL(id,ed,max){if(!id)return null;const k=id+'|'+JSON.stringify(ed||{})+'|'+(max||0);if(URLS.has(k))return URLS.get(k);
   const r=await idbGet(id);const src=srcOf(r);if(!src)return null;const b=(isPlain(ed)&&!max)?src:await renderEdit(src,ed||{},max);const u=URL.createObjectURL(b);URLS.set(k,u);return u}
@@ -163,6 +175,10 @@ function workOf(it){if(it.work)return it.work;let s=String(it.title||'').replace
 function volOf(it){const t=String(it.title||'').normalize('NFKC');let m=t.match(/(\d{1,3})\s*[-〜~ー]\s*(\d{1,3})\s*巻?/);if(m)return `${m[1]}〜${m[2]}巻`;m=t.match(/(\d{1,3})\s*巻/);return m?`${m[1]}巻`:''}
 function bannerDefault(it){const w=workOf(it);const v=/巻$/.test(w)?'':volOf(it);return `${summary(it)}${w}${v?' '+v:''}`.trim()}
 const bannerText=it=>(it.banner&&it.banner.text)||bannerDefault(it);
+// v1.1.0：定番文言のチップ。含まれていれば外し、無ければ末尾に足す（トグル）
+const BN_CHIPS=['全巻セット','全巻初版','帯付き','美品','送料込み'];
+function bnToggle(text,w){text=String(text||'').trim();if(!text.includes(w))return (text+' '+w).trim();
+  return text.split(w).join(' ').replace(/【[\s・]*】/g,' ').replace(/【[\s・]+/g,'【').replace(/[\s・]+】/g,'】').replace(/[ 　]{2,}/g,' ').trim()}
 
 /* ============================================================
    画像処理（取り込み圧縮・簡易編集・合成）
@@ -181,10 +197,69 @@ const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 function cropRect(sw,sh,cr){cr=cr||{};const sc=clamp(cr.scale||1,1,4);const side=Math.min(sw,sh)/sc;const cx=sw/2+clamp(cr.x||0,-1,1)*(sw-side)/2,cy=sh/2+clamp(cr.y||0,-1,1)*(sh-side)/2;return{sx:cx-side/2,sy:cy-side/2,side}}
 async function rotated(orig,rot){const bm=await bitmap(orig);const w=W(bm),h=H(bm),r=((rot||0)%4+4)%4;const sw=r%2?h:w,sh=r%2?w:h;
   const c=cv(sw,sh);const x=c.getContext('2d');x.translate(sw/2,sh/2);x.rotate(r*Math.PI/2);x.drawImage(bm,-w/2,-h/2);return c}
+// v1.1.0：適用順は 回転 → 背景ぼかし → 1:1切り抜き → 自動補正。マスクは元写真の向きで保存し、写真と同じ回転をかけてから合成する
 async function renderEdit(orig,ed,max){let c=await rotated(orig,ed.rot);
+  if(hasBlur(ed)){const m=await maskCanvas(ed.blur.mask,ed.rot);if(m)c=blurBg(c,m,ed.blur.lvl)}
   if(ed.square){const {sx,sy,side}=cropRect(c.width,c.height,ed.crop);const o=Math.round(max?Math.min(side,max):side);const c2=cv(o,o);c2.getContext('2d').drawImage(c,sx,sy,side,side,0,0,o,o);c=c2}
   else if(max&&Math.max(c.width,c.height)>max){const k=max/Math.max(c.width,c.height);const c2=cv(Math.round(c.width*k),Math.round(c.height*k));c2.getContext('2d').drawImage(c,0,0,c2.width,c2.height);c=c2}
   if(ed.auto)autoLevel(c);return toBlob(c,max?0.8:0.9)}
+
+/* ---------- v1.1.0 背景ぼかし（マスク合成） ---------- */
+const BLUR_LV={w:8,m:16,s:32};   // 縮小倍率（大きいほど強くぼける）
+const BLUR_NAME={w:'弱',m:'中',s:'強'};
+const toPNG=c=>new Promise(r=>c.toBlob(b=>r(b),'image/png'));
+// 正規化座標 (x,y) を時計回りに r×90° 回した画像上の座標へ。逆変換は rotPt(x,y,(4-r)%4)
+function rotPt(x,y,r){r=((r||0)%4+4)%4;return r===1?[1-y,x]:r===2?[1-x,1-y]:r===3?[y,1-x]:[x,y]}
+// 縮小→拡大でぼかす（ctx.filter を使わない）。src を一度 出力の1/k まで段階的に縮め、段階的に ow×oh へ戻す
+function softScale(src,k,ow,oh){const tw=Math.max(2,Math.round(ow/k)),th=Math.max(2,Math.round(oh/k));let cur=src,cw=W(src),ch=H(src);
+  const step=(nw,nh)=>{const n=cv(nw,nh);const x=n.getContext('2d');x.imageSmoothingEnabled=true;x.imageSmoothingQuality='high';x.drawImage(cur,0,0,nw,nh);cur=n;cw=nw;ch=nh};
+  while(cw>tw*2||ch>th*2)step(Math.max(tw,Math.round(cw/2)),Math.max(th,Math.round(ch/2)));
+  step(tw,th);
+  while(cw<ow||ch<oh)step(Math.min(ow,cw*2),Math.min(oh,ch*2));
+  return cur}
+// 全体をぼかした画像の上に、境界を少しぼかしたマスクで切り抜いた被写体を重ねる
+function blurBg(c,m,lvl){const w=c.width,h=c.height;const out=softScale(c,BLUR_LV[lvl]||BLUR_LV.m,w,h);
+  const fm=softScale(m,Math.max(2,Math.round(Math.max(w,h)/400)),w,h);
+  const fg=cv(w,h);const x=fg.getContext('2d');x.drawImage(fm,0,0);x.globalCompositeOperation='source-in';x.drawImage(c,0,0);
+  out.getContext('2d').drawImage(fg,0,0);return out}
+async function maskCanvas(id,rot){const r=await idbGet(id).catch(()=>null);const b=srcOf(r);if(!b)return null;try{return await rotated(b,rot)}catch(e){return null}}
+
+/* ---------- v1.1.0 背景ぼかし（被写体マスクの生成：MediaPipe InteractiveSegmenter を初回だけ遅延ロード） ---------- */
+const MP_VER='0.10.14';   // バージョン固定
+const MP_BASE=`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
+const MP_MODEL='https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/1/magic_touch.tflite';
+const SEG_MAX=1024;   // マスク生成に渡す画像の長辺
+let SEGP=null,SEGOK=false;
+const withTimeout=(p,ms)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]);
+function loadSeg(){if(SEGP)return SEGP;
+  if(navigator.onLine===false)return Promise.reject(new Error('offline'));
+  SEGP=withTimeout((async()=>{const v=await import(MP_BASE+'/vision_bundle.mjs');const fs=await v.FilesetResolver.forVisionTasks(MP_BASE+'/wasm');
+    const seg=await v.InteractiveSegmenter.createFromOptions(fs,{baseOptions:{modelAssetPath:MP_MODEL,delegate:'CPU'},outputCategoryMask:true,outputConfidenceMasks:true});SEGOK=true;return seg})(),90000);
+  SEGP.catch(()=>{SEGP=null});return SEGP}
+// マスクの中身はコールバック内でしか有効でないため、そこで素の配列へ写す
+function readMasks(res){const o={conf:[],cat:null};if(!res)return o;
+  try{for(const m of res.confidenceMasks||[])o.conf.push({w:m.width,h:m.height,d:Float32Array.from(m.getAsFloat32Array())})}catch(e){o.conf=[]}
+  try{const m=res.categoryMask;if(m)o.cat={w:m.width,h:m.height,d:Uint8Array.from(m.getAsUint8Array())}}catch(e){}return o}
+// 被写体のアルファ（0〜255）。どの値が被写体かはモデルの版で変わりうるため、タップ位置の値で決める
+function maskAlpha(o,x,y){const win=(w,h,f)=>{const cx=clamp(Math.round(x*(w-1)),0,w-1),cy=clamp(Math.round(y*(h-1)),0,h-1);const out=[];
+    for(let j=-2;j<=2;j++)for(let i=-2;i<=2;i++){const px=cx+i,py=cy+j;if(px>=0&&py>=0&&px<w&&py<h)out.push(f(py*w+px))}return out};
+  let w,h,a;
+  if(o.conf&&o.conf.length){w=o.conf[0].w;h=o.conf[0].h;let k=0,best=-1;
+    o.conf.forEach((m,j)=>{const v=win(w,h,i=>m.d[i]);const av=v.reduce((s,t)=>s+t,0)/v.length;if(av>best){best=av;k=j}});
+    const d=o.conf[k].d,inv=o.conf.length===1&&best<0.5;a=new Uint8ClampedArray(w*h);
+    for(let i=0;i<w*h;i++){let v=inv?1-d[i]:d[i];v=clamp((v-0.3)/0.4,0,1);a[i]=Math.round(v*v*(3-2*v)*255)}}
+  else if(o.cat){w=o.cat.w;h=o.cat.h;const d=o.cat.d;const cnt=new Map();for(const v of win(w,h,i=>d[i]))cnt.set(v,(cnt.get(v)||0)+1);
+    let fg=0,bc=-1;cnt.forEach((n,v)=>{if(n>bc){bc=n;fg=v}});a=new Uint8ClampedArray(w*h);for(let i=0;i<w*h;i++)a[i]=d[i]===fg?255:0}
+  else return null;
+  let sum=0;for(let i=0;i<a.length;i++)sum+=a[i];return{w,h,a,ratio:sum/(255*a.length)}}
+async function makeMask(seg,src,x,y){const bm=await bitmap(src);const s=Math.min(1,SEG_MAX/Math.max(W(bm),H(bm)));
+  const c=cv(Math.max(1,Math.round(W(bm)*s)),Math.max(1,Math.round(H(bm)*s)));c.getContext('2d').drawImage(bm,0,0,c.width,c.height);
+  let got=null;const ret=seg.segment(c,{keypoint:{x,y}},res=>{got=readMasks(res)});
+  if(!got&&ret){got=readMasks(ret);try{ret.close()}catch(e){}}
+  const m=got&&maskAlpha(got,x,y);if(!m)throw new Error('マスクが返りませんでした');
+  const mc=cv(m.w,m.h);const mx=mc.getContext('2d');const id=mx.createImageData(m.w,m.h);
+  for(let i=0;i<m.a.length;i++){id.data[i*4]=id.data[i*4+1]=id.data[i*4+2]=255;id.data[i*4+3]=m.a[i]}mx.putImageData(id,0,0);
+  return{blob:await toPNG(mc),ratio:m.ratio}}
 async function withBanner(blob,text){const bm=await bitmap(blob);const c=cv(W(bm),H(bm));const x=c.getContext('2d');x.drawImage(bm,0,0);
   const L=bannerLayout(x,c.width,text);
   x.fillStyle='#ffe100';x.fillRect(0,0,c.width,L.bh);   // v1.0.2：帯は横幅いっぱい・高さ固定（文字数で変えない）
@@ -248,6 +323,7 @@ function shootHTML(it){const p=progress(it);const target=isSet(it)?'7〜10枚':'
   <div class="card"><div class="sec" style="margin-top:0">カバー文字入れ（1枚目にだけ、書き出し時に合成）</div>
     <label class="row" style="margin-bottom:8px"><input type="checkbox" class="chk" id="bnOn" ${it.banner&&it.banner.on?'checked':''}> 黄色バナーを入れる</label>
     <div class="inline"><input id="bnTx" value="${esc(bannerText(it))}"><button class="btn sm" data-act="bnReset">自動に戻す</button></div>
+    <div class="chips">${BN_CHIPS.map(w=>{const on=bannerText(it).includes(w);return `<button class="chip${on?' on':''}" data-act="bnChip" data-w="${esc(w)}" aria-pressed="${on}">${esc(w)}</button>`}).join('')}</div>
     <div class="btns" style="margin-top:8px"><button class="btn" data-act="bnPreview">プレビュー</button></div>
     <div class="note warnc" id="bnWarn" style="margin-top:6px;color:var(--neg);font-weight:700"${bannerFits(bannerText(it))?' hidden':''}>⚠️ 文字が長すぎて、最小サイズまで縮めても帯に収まりません。文言を短くしてください。</div>
     <div class="note" style="margin-top:6px">文言は1行だけ。帯の幅と高さはタイトルによらず同じです（長い文言は文字を小さくして1行に収めます）。元の写真は加工しません。</div></div>
@@ -257,13 +333,15 @@ function shootHTML(it){const p=progress(it);const target=isSet(it)?'7〜10枚':'
     <div class="note" style="margin-top:6px">JPEG・1:1の枠を基準に揃えた構図で、メルカリ／Yahoo!フリマ／ラクマ／ヤフオク共通。ヤフオクは先頭10枚を使ってください。</div></div>
   <div class="card"><button class="btn" style="width:100%" data-act="toSSS">SSSで開く</button>${it.status!=='撮影完了'?'<div class="note" style="margin-top:6px">まだ必須ショットが残っています。</div>':''}</div>
   <div class="btns" style="margin-top:12px"><button class="btn dng" data-act="delItem">この商品を削除</button></div>`}
+function bnSync(it){const t=bannerText(it);document.querySelectorAll('[data-act="bnChip"]').forEach(c=>{const on=t.includes(c.dataset.w);c.classList.toggle('on',on);c.setAttribute('aria-pressed',String(on))});
+  const w=document.getElementById('bnWarn');if(w)w.hidden=bannerFits(t)}
 async function fillImgs(it){const v=UI.view;for(let i=0;i<it.shots.length;i++){const s=it.shots[i];
     if(s.imgId){const u=await shotURL(s.imgId,s.edit,360);if(UI.view!==v)return;const e=$('#th'+i);if(e)e.innerHTML=u?`<img src="${u}" alt="">`:'写真データなし<br>（再取り込み）'}
     const m=S.models[s.key];if(m){const u=await imgURL(m);const e=$('#md'+i);if(e&&u)e.src=u}}}
 
 /* ---------- シート ---------- */
 function openSheet(t,h){$('#shT').textContent=t;$('#shB').innerHTML=h;$('#sheet').hidden=false;$('#shB').scrollTop=0}
-function closeSheet(){$('#sheet').hidden=true;$('#shB').innerHTML=''}
+function closeSheet(){blEnd();$('#sheet').hidden=true;$('#shB').innerHTML=''}
 function gridSVG(img){const w=img.naturalWidth,h=img.naturalHeight;const m=Math.min(w,h);const x0=(w-m)/2,y0=(h-m)/2;
   return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${[1,2].map(k=>`<line x1="${w*k/3}" y1="0" x2="${w*k/3}" y2="${h}" stroke="#fff" stroke-opacity=".7" stroke-width="${w/400}"/><line x1="0" y1="${h*k/3}" x2="${w}" y2="${h*k/3}" stroke="#fff" stroke-opacity=".7" stroke-width="${w/400}"/>`).join('')}
   <line x1="${w/2}" y1="0" x2="${w/2}" y2="${h}" stroke="#5aa9ff" stroke-dasharray="${w/60}" stroke-width="${w/300}"/><line x1="0" y1="${h/2}" x2="${w}" y2="${h/2}" stroke="#5aa9ff" stroke-dasharray="${w/60}" stroke-width="${w/300}"/>
@@ -275,13 +353,13 @@ async function openEdit(i){const it=getI(UI.view);const s=it.shots[i];if(!s||!s.
   const u=await shotURL(s.imgId,ed,1200);const rc=await rotated(src,ed.rot);const rb=await toBlob(rc,0.8);
   if(EDI&&EDI.rotURL)URL.revokeObjectURL(EDI.rotURL);EDI={id:it.id,i,rotURL:URL.createObjectURL(rb),w:rc.width,h:rc.height,crop:Object.assign({x:0,y:0,scale:1},ed.crop||{})};
   openSheet(`編集：${s.label}`,`<div class="pv"><img id="edImg" src="${u||''}" alt=""></div>
-  <div class="btns"><button class="btn ${ed.auto?'pri':''}" data-act="eAuto">✨ 自動補正${ed.auto?'（ON）':''}</button><button class="btn" data-act="eRot">⟳ 回転</button><button class="btn" data-act="eSq">${ed.square?'1:1をやめる（元画角）':'1:1にする'}</button><button class="btn" data-act="eUndo">元に戻す</button></div>
+  <div class="btns"><button class="btn ${ed.auto?'pri':''}" data-act="eAuto">✨ 自動補正${ed.auto?'（ON）':''}</button><button class="btn" data-act="eRot">⟳ 回転</button><button class="btn" data-act="eSq">${ed.square?'1:1をやめる（元画角）':'1:1にする'}</button><button class="btn ${hasBlur(ed)?'pri':''}" data-act="eBlur">🌫 背景ぼかし${hasBlur(ed)?`（${BLUR_NAME[ed.blur.lvl]||'中'}）`:''}</button><button class="btn" data-act="eUndo">元に戻す</button></div>
   <div id="oneBox" style="margin-top:8px">${oneBtnHTML(it,i)}</div>
   ${ed.square?`<div class="sec">画角調整（写真をドラッグで移動・スライダーで拡大）</div>
   <div id="cropBox" class="cropbox"><img id="cropImg" src="${EDI.rotURL}" alt="" draggable="false"></div>
   <div class="row" style="margin-top:8px"><span class="note">縮小</span><input id="cropZ" type="range" min="1" max="3" step="0.01" value="${EDI.crop.scale}" class="grow"><span class="note">拡大</span><button class="btn sm" data-act="cropReset">中央に戻す</button></div>`:''}
   <label class="row" style="margin-top:12px"><input type="checkbox" class="chk" id="gridOn" ${UI.grid?'checked':''}> グリッド（三分割＋中央線＋1:1枠）を表示</label>
-  <div class="note" style="margin-top:8px">写真は取り込んだまま（元の画角）で保存し、編集は表示と書き出しのときに反映します。「元に戻す」でいつでも取り込み直後（1:1・中央）の状態に戻せます。</div>`);
+  <div class="note" style="margin-top:8px">写真は取り込んだまま（元の画角）で保存し、編集は表示と書き出しのときに反映します。「元に戻す」でいつでも取り込み直後（1:1・中央）の状態に戻せます（背景ぼかしも外れます）。</div>`);
   wireGrid();if(ed.square)wireCrop()}
 function cropGrid(){const b=$('#cropBox');if(!b)return;const o=b.querySelector('svg');if(o)o.remove();if(!UI.grid)return;
   b.insertAdjacentHTML('beforeend',`<svg viewBox="0 0 300 300" preserveAspectRatio="none"><line x1="100" y1="0" x2="100" y2="300"/><line x1="200" y1="0" x2="200" y2="300"/><line x1="0" y1="100" x2="300" y2="100"/><line x1="0" y1="200" x2="300" y2="200"/><line class="c" x1="150" y1="0" x2="150" y2="300"/><line class="c" x1="0" y1="150" x2="300" y2="150"/></svg>`)}
@@ -298,6 +376,41 @@ function wireCrop(){const b=$('#cropBox'),im=$('#cropImg');if(!b)return;const go
   const end=()=>{if(st){st=null;commitCrop()}};b.addEventListener('pointerup',end);b.addEventListener('pointercancel',end);
   const z=$('#cropZ');z.addEventListener('input',()=>{EDI.crop.scale=+z.value;placeCrop()});z.addEventListener('change',()=>commitCrop())}
 async function applyEdit(mut){ONE=null;const it=getI(EDI.id);const s=it.shots[EDI.i];s.edit=Object.assign({},s.edit||{});mut(s);dropURL(s.imgId);it.updatedAt=Date.now();UI.prepared=null;ONE=null;save();await openEdit(EDI.i);fillImgs(it)}
+
+/* ---------- v1.1.0 背景ぼかし画面（タップ→マスク生成→強さを選んでプレビュー→適用） ---------- */
+let BL=null;
+async function openBlur(){if(!EDI)return;const it=getI(EDI.id);const s=it&&it.shots[EDI.i];if(!s||!s.imgId)return;
+  const r=await idbGet(s.imgId).catch(()=>null);const src=srcOf(r);if(!src){toast('写真データがありません');return}
+  const ed=s.edit||{};const b=hasBlur(ed)?ed.blur:null;blEnd();
+  BL={tok:uid(),i:EDI.i,src,rot:ed.rot||0,x:b&&b.x!=null?b.x:null,y:b&&b.y!=null?b.y:null,mask:b?b.mask:null,applied:b?b.mask:null,lvl:b&&BLUR_LV[b.lvl]?b.lvl:'m',busy:false,url:null,seq:0};
+  openSheet(`背景ぼかし：${s.label}`,`<div class="guide" id="blG">${b?'今のぼかしを表示しています。作り直すときは商品をタップしてください':'👆 商品をタップしてください（タップした物を残して、背景をぼかします）'}</div>
+  <div class="pv" id="blBox"><img id="blImg" data-act="blTap" src="" alt="" style="cursor:crosshair"><div id="blMk" class="mk" hidden></div></div>
+  <div id="blSt" class="blst" hidden><div class="bar"><i></i></div><span id="blStT"></span></div>
+  <div class="flag"><span>強さ</span><div class="seg" id="blLv">${['w','m','s'].map(v=>`<button class="${BL.lvl===v?'on':''}" data-act="blLv" data-v="${v}">${BLUR_NAME[v]}</button>`).join('')}</div></div>
+  <div class="btns"><button class="btn ok" data-act="blApply">この強さで適用</button><button class="btn" data-act="blCancel">やめる（編集に戻る）</button>${b?'<button class="btn dng" data-act="blOff">ぼかしを外す</button>':''}</div>
+  <div class="note" style="margin-top:8px">初回はぼかし用のライブラリとモデル（数MB）をネットから読み込みます。ここでは回転だけを反映した全体を表示します（1:1の切り抜き・自動補正は適用後の編集画面で反映されます）。元の写真は変わりません。</div>`);
+  await blPreview()}
+async function blPreview(){if(!BL)return;const B=BL,seq=++B.seq;const ed={rot:B.rot};if(B.mask)ed.blur={mask:B.mask,lvl:B.lvl};
+  let b=null;try{b=await renderEdit(B.src,ed,1200)}catch(e){}if(BL!==B||B.seq!==seq||!b)return;
+  if(B.url)URL.revokeObjectURL(B.url);B.url=URL.createObjectURL(b);const im=$('#blImg');if(im)im.src=B.url;blMark()}
+function blMark(){const mk=$('#blMk');if(!mk||!BL)return;if(BL.x==null){mk.hidden=true;return}const [x,y]=rotPt(BL.x,BL.y,BL.rot);mk.style.left=x*100+'%';mk.style.top=y*100+'%';mk.hidden=false}
+function blStatus(t){const e=$('#blSt');if(!e)return;e.hidden=!t;const tt=$('#blStT');if(tt)tt.textContent=t||''}
+function blEnd(){if(!BL)return;if(BL.mask&&BL.mask!==BL.applied)idbDel(BL.mask).catch(()=>{});if(BL.url)URL.revokeObjectURL(BL.url);BL=null}   // 未適用のマスクは捨てる
+async function blTap(e){if(!BL||BL.busy)return;const im=$('#blImg');const rc=im&&im.getBoundingClientRect();if(!rc||!rc.width||!rc.height)return;
+  const B=BL;const [x,y]=rotPt(clamp((e.clientX-rc.left)/rc.width,0,1),clamp((e.clientY-rc.top)/rc.height,0,1),(4-B.rot)%4);
+  const px=B.x,py=B.y;B.busy=true;B.x=x;B.y=y;blMark();const t0=performance.now();
+  try{
+    let seg;try{blStatus(SEGOK?'準備中…':'ぼかし用のライブラリとモデルを読み込み中…（初回のみ・数MB）');seg=await loadSeg()}
+    catch(err){if(BL!==B)return;const i=B.i;blEnd();toast('背景ぼかしはネット接続時に使えます（読み込みに失敗しました）');await openEdit(i);return}
+    if(BL!==B)return;blStatus('被写体のマスクを生成中…');await new Promise(r=>setTimeout(r,30));   // 進捗表示を先に描かせる
+    let res;try{res=await makeMask(seg,B.src,x,y)}catch(err){if(BL===B){B.x=px;B.y=py;blMark();blStatus('');toast('マスクを作れませんでした。商品の別の場所をタップしてください')}return}
+    if(BL!==B)return;blStatus('保存中…');const id='k_'+uid();await idbPut({id,orig:res.blob,at:Date.now(),kind:'mask'});
+    if(BL!==B){idbDel(id).catch(()=>{});return}
+    if(B.mask&&B.mask!==B.applied)idbDel(B.mask).catch(()=>{});B.mask=id;blStatus('');await blPreview();
+    const g=$('#blG');if(g)g.textContent=res.ratio<0.005||res.ratio>0.97?'⚠ 被写体をうまく切り出せなかった可能性があります。商品の別の場所をタップし直してください'
+      :`✓ マスクを作りました（${((performance.now()-t0)/1000).toFixed(1)}秒）。違う場合は商品をタップし直してください`}
+  catch(err){if(BL===B){blStatus('');toast('背景ぼかしでエラーが起きました（編集内容はそのままです）')}}
+  finally{B.busy=false;if(BL===B&&!B.mask)blStatus('')}}
 
 /* ---------- 取り込み ---------- */
 async function importPhoto(i,file){const it=getI(UI.view);const s=it.shots[i];if(!s)return;toast('取り込み中…');
@@ -327,7 +440,7 @@ function fromURL(){let q;try{q=new URLSearchParams(location.search)}catch(e){ret
 
 /* ---------- 容量・永続化・移行 ---------- */
 const fmtMB=n=>n>=1073741824?(n/1073741824).toFixed(2)+' GB':(n/1048576).toFixed(1)+' MB';
-async function showUsage(){const e=$('#usage');if(!e)return;let photos=0,cnt=0;try{for(const r of await idbAll()){const b=srcOf(r);if(b){photos+=b.size+(r.cur&&r.orig?r.cur.size:0);cnt++}}}catch(_){}
+async function showUsage(){const e=$('#usage');if(!e)return;let photos=0,cnt=0;try{for(const r of await idbAll()){const b=srcOf(r);if(b){photos+=b.size+(r.cur&&r.orig?r.cur.size:0);if(r.kind!=='mask')cnt++}}}catch(_){}
   let site=null;try{if(navigator.storage&&navigator.storage.estimate){const est=await navigator.storage.estimate();site=est.usage}}catch(_){}
   const el=$('#usage');if(el)el.innerHTML=`${site!=null?`${fmtMB(site)}（このサイトの使用量）<br>`:''}写真データ ${fmtMB(photos)}（${cnt}枚）`}
 async function migrate101(){if(S.mig101)return;let recs=[];try{recs=await idbAll()}catch(e){return}
@@ -337,6 +450,10 @@ async function migrate101(){if(S.mig101)return;let recs=[];try{recs=await idbAll
       const rec={id:r.id,orig:(edited||!r.orig)?r.cur:r.orig,at:r.at||Date.now()};await idbPut(rec);
       if(sh){if(edited)sh.edit={};sh.base={}}}catch(e){}}
   S.mig101=1;save()}
+// v1.1.0：どの写真からも参照されなくなった背景ぼかしマスク（写真削除・撮り直し・バックアップ読み込み後など）を起動時に片付ける
+async function gcMasks(){let keys;try{keys=await idbKeys()}catch(e){return}const used=new Set();
+  for(const it of S.items)for(const s of it.shots||[])if(hasBlur(s.edit))used.add(s.edit.blur.mask);
+  for(const k of keys||[])if(typeof k==='string'&&k.startsWith('k_')&&!used.has(k))await idbDel(k).catch(()=>{})}
 try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{})}catch(e){}
 
 /* ---------- 書き出し ---------- */
@@ -351,7 +468,7 @@ let ONE=null;
 function oneIndex(it,i){const list=it.shots.filter(s=>s.imgId);return list.indexOf(it.shots[i])}
 function oneBtnHTML(it,i){const k=oneIndex(it,i);if(k<0)return '';const name=`${safeName(it.title)}_${String(k+1).padStart(2,'0')}.jpg`;
   return ONE&&ONE.id===it.id&&ONE.i===i?`<button class="btn ok" style="width:100%" data-act="oneGo">共有シートを開く（この1枚）→「画像を保存」</button><div class="note" style="margin-top:4px">${esc(ONE.file.name)}</div>`
-    :`<button class="btn" style="width:100%" data-act="onePrep">💾 この写真だけ保存（${esc(name)}）</button><div class="note" style="margin-top:4px">今の編集（画角・回転・自動補正${k===0?'・表紙の文字入れ':''}）を反映して保存します。</div>`}
+    :`<button class="btn" style="width:100%" data-act="onePrep">💾 この写真だけ保存（${esc(name)}）</button><div class="note" style="margin-top:4px">今の編集（画角・回転・自動補正・背景ぼかし${k===0?'・表紙の文字入れ':''}）を反映して保存します。</div>`}
 async function exportOne(it,i){const s=it.shots[i];const k=oneIndex(it,i);if(k<0)return null;let b=await shotBlob(s);if(!b)return null;
   if(k===0&&it.banner&&it.banner.on&&bannerText(it))b=await withBanner(b,bannerText(it));
   return new File([b],`${safeName(it.title)}_${String(k+1).padStart(2,'0')}.jpg`,{type:'image/jpeg'})}
@@ -378,7 +495,16 @@ const A={
   addNarabi(){const it=getI(UI.view);const s=mkShot('narabi',false);s.optional=true;it.shots.push(s);finalize(it);save();render2()},
   addCustom(){const it=getI(UI.view);const l=($('#cusL').value||'').trim();if(!l){toast('ラベルを入力してください');return}it.shots.push({key:'c_'+uid(),label:l,required:false,imgId:null,cover:false,custom:true});finalize(it);save();render2()},
   edit(b){openEdit(+b.dataset.i)},
-  eAuto(){applyEdit(s=>{s.edit.auto=!s.edit.auto})},eRot(){applyEdit(s=>{s.edit.rot=((s.edit.rot||0)+1)%4})},eSq(){applyEdit(s=>{s.edit.square=!s.edit.square})},eUndo(){applyEdit(s=>{s.edit=JSON.parse(JSON.stringify(s.base||{}))})},
+  eAuto(){applyEdit(s=>{s.edit.auto=!s.edit.auto})},eRot(){applyEdit(s=>{s.edit.rot=((s.edit.rot||0)+1)%4})},eSq(){applyEdit(s=>{s.edit.square=!s.edit.square})},
+  eUndo(){applyEdit(s=>{const m=hasBlur(s.edit)?s.edit.blur.mask:null;s.edit=JSON.parse(JSON.stringify(s.base||{}));if(m)idbDel(m).catch(()=>{})})},
+  eBlur(){openBlur()},
+  blTap(b,e){blTap(e)},
+  blLv(b){if(!BL||!BLUR_LV[b.dataset.v])return;BL.lvl=b.dataset.v;document.querySelectorAll('#blLv button').forEach(x=>x.classList.toggle('on',x.dataset.v===BL.lvl));if(BL.mask)blPreview()},
+  blApply(){if(!BL||BL.busy)return;if(!BL.mask){toast('先に商品をタップしてください');return}const B=BL;BL=null;if(B.url)URL.revokeObjectURL(B.url);
+    applyEdit(s=>{s.edit.blur={mask:B.mask,x:B.x==null?null:+B.x.toFixed(4),y:B.y==null?null:+B.y.toFixed(4),lvl:B.lvl}});
+    if(B.applied&&B.applied!==B.mask)idbDel(B.applied).catch(()=>{});toast(`背景ぼかし（${BLUR_NAME[B.lvl]}）を適用しました`)},
+  blCancel(){if(!BL)return;const i=BL.i;blEnd();openEdit(i)},
+  blOff(){if(!BL||BL.busy)return;const old=BL.applied;blEnd();applyEdit(s=>{delete s.edit.blur});if(old)idbDel(old).catch(()=>{});toast('背景ぼかしを外しました')},
   cropReset(){applyEdit(s=>{s.edit.crop={x:0,y:0,scale:1}})},
   async setModel(b){const it=getI(UI.view);const s=it.shots[+b.dataset.i];const bl=await shotBlob(s);if(!bl)return;const old=S.models[s.key];const id='m_'+uid();
     await idbPut({id,orig:bl,at:Date.now()});S.models[s.key]=id;if(old){await idbDel(old).catch(()=>{});dropURL(old)}save();render2();toast(`「${s.label}」のお手本に登録しました`)},
@@ -395,6 +521,8 @@ const A={
     const out=await collage(blobs,n);const id=uid();await idbPut({id,orig:out,at:Date.now()});
     it.shots.push({key:'col_'+uid(),label:`分割合成 ${n}×${n}（${idx.length}枚）`,required:false,imgId:id,cover:false,custom:true,collage:true});
     UI.col=false;UI.sel={};finalize(it);save();UI.prepared=null;ONE=null;render2();toast('合成画像を追加しました（元の写真はそのままです）')},
+  bnChip(b){const it=getI(UI.view);if(!it)return;const inp=$('#bnTx');const cur=(inp?inp.value:bannerText(it)).replace(/\s*\n\s*/g,' ').trim();const v=bnToggle(cur,b.dataset.w);
+    it.banner=Object.assign({on:false},it.banner,{text:v===bannerDefault(it)?'':v});save();ONE=null;if(UI.prepared){UI.prepared=null;render2();return}if(inp)inp.value=bannerText(it);bnSync(it)},
   bnReset(){const it=getI(UI.view);it.banner=Object.assign({on:false},it.banner,{text:''});save();UI.prepared=null;ONE=null;render2()},
   async bnPreview(){const it=getI(UI.view);const f=it.shots.find(s=>s.imgId);if(!f){toast('先に1枚目の写真を撮ってください');return}const fb=await shotBlob(f);if(!fb)return;
     const b=await withBanner(fb,bannerText(it));const u=URL.createObjectURL(b);openSheet('カバー文字入れのプレビュー',`<div class="pv"><img src="${u}" alt=""></div><div class="note">書き出す1枚目にだけ合成されます。元の写真は変わりません。</div>`)},
@@ -437,14 +565,14 @@ document.addEventListener('change',async e=>{const el=e.target;
   if(el.dataset.col!==undefined){UI.sel[el.dataset.col]=el.checked;render2();return}
   if(el.id==='gridOn'){UI.grid=el.checked;wireGrid();cropGrid();return}
   if(el.id==='bnOn'){const it=getI(UI.view);it.banner=Object.assign({text:''},it.banner,{on:el.checked});save();UI.prepared=null;ONE=null;render2();return}
-  if(el.id==='bnTx'){const it=getI(UI.view);const v=el.value.replace(/\s*\n\s*/g,' ').trim();it.banner=Object.assign({on:false},it.banner,{text:v===bannerDefault(it)?'':v});save();UI.prepared=null;ONE=null;const w=document.getElementById('bnWarn');if(w)w.hidden=bannerFits(bannerText(it));return}
+  if(el.id==='bnTx'){const it=getI(UI.view);const v=el.value.replace(/\s*\n\s*/g,' ').trim();it.banner=Object.assign({on:false},it.banner,{text:v===bannerDefault(it)?'':v});save();UI.prepared=null;ONE=null;const w=document.getElementById('bnWarn');if(w)w.hidden=bannerFits(bannerText(it));bnSync(it);return}
   if(el.id==='sssUrl'){S.settings.sssUrl=el.value.trim();save();toast('保存しました');return}
   if(el.id==='sssF'&&el.files[0]){await sssImport(el.files[0]);el.value='';return}
   if(el.id==='bkIn'&&el.files[0]){let o;try{o=JSON.parse(await el.files[0].text())}catch(_){toast('JSONを読み込めません');return}const d=o&&o.app==='KOMA'&&o.data?o.data:o;
     if(!d||!Array.isArray(d.items)){toast('KOMAのバックアップではありません');return}if(!confirm(`今のデータ（商品${S.items.length}件）を、バックアップ（商品${d.items.length}件）で置き換えます。写真はバックアップに含まれないため、端末に残っている写真だけが表示されます。よろしいですか？`))return;
     S=fix(d);save();closeSheet();UI.view='list';render2();toast('読み込みました')}
 });
-fromURL();render2();migrate101().then(()=>{URLS.forEach(u=>URL.revokeObjectURL(u));URLS.clear();render2()});
+fromURL();render2();migrate101().then(()=>{URLS.forEach(u=>URL.revokeObjectURL(u));URLS.clear();render2()}).then(()=>gcMasks()).catch(()=>{});
 </script>
 </body>
 </html>
